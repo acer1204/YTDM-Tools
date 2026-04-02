@@ -636,8 +636,14 @@ def run_download(job_id: str):
             save_jobs()
     finally:
         _stop_flags.pop(job_id, None)
-        # Remove the temp cookies copy regardless of success/failure
+        # Copy refreshed tokens back to the original, then remove temp copy.
+        # yt-dlp rotates OAuth tokens during download; discarding the temp file
+        # would leave the original with stale tokens that YouTube rejects next time.
         if _tmp_cookie_path and _tmp_cookie_path.exists():
+            try:
+                shutil.copy2(_tmp_cookie_path, _src)
+            except Exception:
+                pass
             try:
                 _tmp_cookie_path.unlink()
             except Exception:

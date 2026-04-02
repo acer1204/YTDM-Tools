@@ -438,7 +438,6 @@ input:focus, select:focus { border-color: #7c6dfa; }
   gap: 20px;
   max-width: 1100px;
   margin: 0 auto;
-  align-items: start;
 }
 .sg-full { grid-column: 1 / -1; }
 @media (max-width: 720px) {
@@ -954,6 +953,27 @@ let queuePollTimer   = null;
 let selectedJobId    = null;
 let expandedJobIds   = new Set();
 let expandedSections = new Set(); // e.g. "jobId-videos", "jobId-shorts"
+
+// Stable short hash (DJB2) for video keys → used in element IDs
+function _h(s) {
+  let h = 5381;
+  for (let i = 0; i < s.length; i++) h = (h * 33 ^ s.charCodeAt(i)) >>> 0;
+  return h.toString(36);
+}
+
+// Fingerprint of queue structure — excludes percent/speed/downloaded count
+let _lastQueueStructKey = null;
+function _queueStructKey(list) {
+  return JSON.stringify(list.map(j => ({
+    id: j.id,
+    status: j.status,
+    total: j.total_videos,
+    expanded: expandedJobIds.has(j.id),
+    secV: expandedSections.has(`${j.id}-videos`),
+    secS: expandedSections.has(`${j.id}-shorts`),
+    vids: Object.entries(j.videos || {}).map(([k, v]) => ({ h: _h(k), s: v.status, kind: v.kind })),
+  })));
+}
 let logVisible       = false;
 
 function startQueuePoll() {
@@ -985,10 +1005,46 @@ async function loadQueue() {
 
 function renderQueue(list) {
   const el = document.getElementById("queueList");
+
   if (!list.length) {
     el.innerHTML = `<div class="empty">${t("p2_empty")}</div>`;
+    _lastQueueStructKey = null;
     return;
   }
+
+  const structKey = _queueStructKey(list);
+
+  if (_lastQueueStructKey === structKey) {
+    // Structure unchanged — surgical updates only (count, progress, per-video percent/speed)
+    list.forEach(j => {
+      const total = j.total_videos ?? "?";
+      const dl    = j.downloaded ?? 0;
+      const pct   = total !== "?" && total > 0 ? Math.round(dl / total * 100) : 0;
+
+      const countEl = document.getElementById(`jcount-${j.id}`);
+      if (countEl) countEl.textContent = total === "?" ? t("p2_count_only", dl) : t("p2_count_both", dl, total);
+
+      const fillEl = document.getElementById(`jprogfill-${j.id}`);
+      if (fillEl) fillEl.style.width = pct + "%";
+
+      Object.entries(j.videos || {}).forEach(([k, v]) => {
+        if (v.status !== "downloading") return;
+        const h = _h(k);
+        const barWrap = document.getElementById(`vbar-${j.id}-${h}`);
+        if (barWrap) {
+          const barFill = barWrap.querySelector(".vid-progress-bar");
+          if (barFill) barFill.style.width = (v.percent || 0) + "%";
+        }
+        const pctEl = document.getElementById(`vpct-${j.id}-${h}`);
+        if (pctEl) pctEl.textContent = (v.percent || 0) + "%";
+        const spdEl = document.getElementById(`vspd-${j.id}-${h}`);
+        if (spdEl) spdEl.textContent = v.speed || "";
+      });
+    });
+    return;
+  }
+
+  _lastQueueStructKey = structKey;
   el.innerHTML = list.map(j => renderChannelCard(j)).join("");
 }
 
@@ -1013,7 +1069,7 @@ function renderChannelCard(j) {
   const cookieBadge = j.cookies_file ? `<span class="ch-cookie">🍪 Cookies</span>` : "";
 
   // Helper: render one video item row
-  function renderVidItem(v, i) {
+  function renderVidItem(v, i, jobId, vidKey) {
     const vbadge = {
       pending:    `<span class="badge bd-vpending">${t("vid_pending")}</span>`,
       downloading:`<span class="badge bd-vdl">${t("vid_downloading")}</span>`,
@@ -1027,11 +1083,12 @@ function renderChannelCard(j) {
     const showBar = v.status === "downloading" && v.percent > 0;
     const errLine = (v.status === "error" || v.status === "skipped") && v.error_msg
       ? `<div class="vid-error">${esc(v.error_msg)}</div>` : "";
+    const h = _h(vidKey);
     const barHtml = showBar ? `
-      <div class="vid-progress-wrap"><div class="vid-progress-bar" style="width:${v.percent}%"></div></div>
+      <div class="vid-progress-wrap" id="vbar-${jobId}-${h}"><div class="vid-progress-bar" style="width:${v.percent}%"></div></div>
       <div class="vid-speed-row">
-        <span class="vid-pct">${v.percent}%</span>
-        ${v.speed ? `<span class="vid-speed">${esc(v.speed)}</span>` : ""}
+        <span class="vid-pct" id="vpct-${jobId}-${h}">${v.percent}%</span>
+        <span class="vid-speed" id="vspd-${jobId}-${h}">${v.speed ? esc(v.speed) : ""}</span>
       </div>` : "";
     return `
       <div class="vid-item">
@@ -1045,33 +1102,34 @@ function renderChannelCard(j) {
   }
 
   // Helper: render a collapsible sub-section (Videos or Shorts)
-  function renderSection(jobId, sectionKey, label, items, isRunning) {
-    if (!items.length && !isRunning) return "";
+  // entries = [[key, vidObj], ...]
+  function renderSection(jobId, sectionKey, label, entries, isRunning) {
+    if (!entries.length && !isRunning) return "";
     const secOpen = expandedSections.has(`${jobId}-${sectionKey}`);
     let bodyHtml = "";
     if (secOpen) {
-      bodyHtml = items.length
-        ? items.map((v, i) => renderVidItem(v, i)).join("")
+      bodyHtml = entries.length
+        ? entries.map(([k, v], i) => renderVidItem(v, i, jobId, k)).join("")
         : `<div class="vid-list-placeholder">${t("section_loading")}</div>`;
     }
     return `
       <div class="vid-section-header ${secOpen ? 'open' : ''}"
            onclick="toggleSection('${jobId}','${sectionKey}',event)">
         <span class="vid-section-label">${label}</span>
-        <span class="vid-section-count">${t("p2_count_only", items.length)}</span>
+        <span class="vid-section-count">${t("p2_count_only", entries.length)}</span>
         <span class="vid-section-chevron">▶</span>
       </div>
       ${secOpen ? `<div>${bodyHtml}</div>` : ''}`;
   }
 
-  const allVids   = Object.values(j.videos || {});
-  const vidItems  = allVids.filter(v => v.kind !== "short");
-  const srtItems  = allVids.filter(v => v.kind === "short");
+  const allEntries  = Object.entries(j.videos || {});
+  const vidEntries  = allEntries.filter(([, v]) => v.kind !== "short");
+  const srtEntries  = allEntries.filter(([, v]) => v.kind === "short");
 
   let innerHtml = "";
-  if (allVids.length || isRunning) {
-    innerHtml = renderSection(j.id, "videos", t("section_videos"), vidItems, isRunning)
-              + renderSection(j.id, "shorts", "Shorts", srtItems, isRunning);
+  if (allEntries.length || isRunning) {
+    innerHtml = renderSection(j.id, "videos", t("section_videos"), vidEntries, isRunning)
+              + renderSection(j.id, "shorts", "Shorts", srtEntries, isRunning);
   } else {
     innerHtml = `<div class="vid-list-placeholder">${t("vid_none")}</div>`;
   }
@@ -1085,9 +1143,9 @@ function renderChannelCard(j) {
         <div class="ch-sub">${createdDate} · ${esc(j.url)}</div>
       </div>
       <div class="ch-right">
-        <div class="ch-count">${countStr}</div>
+        <div class="ch-count" id="jcount-${j.id}">${countStr}</div>
         <div class="ch-progress">
-          <div class="ch-progress-fill" style="width:${pct}%"></div>
+          <div class="ch-progress-fill" id="jprogfill-${j.id}" style="width:${pct}%"></div>
         </div>
         ${statusBadge}
         ${isRunning
