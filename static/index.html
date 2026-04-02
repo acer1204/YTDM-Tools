@@ -160,7 +160,17 @@ input:focus, select:focus { border-color: #7c6dfa; }
 .ch-chevron { font-size: .8rem; color: #444; transition: transform .2s; }
 .ch-card.open .ch-chevron { transform: rotate(90deg); }
 
-.ch-actions { display: flex; gap: 8px; padding: 0 18px 14px; }
+.ch-actions { display: flex; gap: 8px; padding: 0 18px 14px; flex-wrap: wrap; }
+.ch-cookie { display: inline-block; font-size: .68rem; padding: 1px 6px;
+  background: #2a2518; color: #c9a84c; border: 1px solid #5a4a20;
+  border-radius: 4px; margin-left: 6px; vertical-align: middle; font-weight: 600; }
+@media (max-width: 600px) {
+  .ch-header { flex-wrap: wrap; }
+  .ch-info { width: calc(100% - 56px); }
+  .ch-right { width: 100%; padding-left: 56px; margin-top: 6px; }
+  .ch-progress { width: 60px; }
+  .ch-sub { white-space: normal; word-break: break-all; }
+}
 
 /* Video list */
 .vid-list { border-top: 1px solid #1e1e2e; }
@@ -647,6 +657,51 @@ input:focus, select:focus { border-color: #7c6dfa; }
   </div>
 
   <div class="card">
+    <div class="section-title">更新檢查模式</div>
+
+    <div style="display:flex;flex-direction:column;gap:14px;margin-top:8px">
+      <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">
+        <input type="radio" name="checkMode" value="full" id="checkModeFull"
+          style="width:auto;accent-color:#7c6dfa;margin-top:3px;cursor:pointer"
+          onchange="document.getElementById('recentCountRow').style.display='none'">
+        <div>
+          <div style="color:#ccc;font-size:.88rem;font-weight:600">完整模式（預設）</div>
+          <div style="color:#666;font-size:.78rem;margin-top:3px">從 YouTube 取得完整影片清單，比對已下載紀錄後下載新影片。清單較大時等待較久。</div>
+        </div>
+      </label>
+      <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">
+        <input type="radio" name="checkMode" value="recent" id="checkModeRecent"
+          style="width:auto;accent-color:#7c6dfa;margin-top:3px;cursor:pointer"
+          onchange="document.getElementById('recentCountRow').style.display='flex'">
+        <div>
+          <div style="color:#ccc;font-size:.88rem;font-weight:600">最近 N 部模式</div>
+          <div style="color:#666;font-size:.78rem;margin-top:3px">只從 YouTube 抓最新的 N 部影片來比對，大幅縮短等待時間，適合定期更新檢查。</div>
+        </div>
+      </label>
+      <div id="recentCountRow" style="display:none;align-items:center;gap:10px;padding-left:24px">
+        <span style="font-size:.82rem;color:#888">最近</span>
+        <input type="number" id="recentCountInput" min="5" max="500" value="50"
+          style="width:70px;text-align:center">
+        <span style="font-size:.82rem;color:#888">部</span>
+      </div>
+      <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">
+        <input type="radio" name="checkMode" value="fast" id="checkModeFast"
+          style="width:auto;accent-color:#7c6dfa;margin-top:3px;cursor:pointer"
+          onchange="document.getElementById('recentCountRow').style.display='none'">
+        <div>
+          <div style="color:#ccc;font-size:.88rem;font-weight:600">快速模式</div>
+          <div style="color:#666;font-size:.78rem;margin-top:3px">略過我們自己的清單讀取，直接讓 yt-dlp 下載頻道 URL，遇到新影片就立即下載，已下載的自動略過。不預先顯示影片清單。</div>
+        </div>
+      </label>
+    </div>
+
+    <div style="margin-top:18px;display:flex;gap:10px;align-items:center">
+      <button class="btn btn-primary" onclick="saveCheckMode()">儲存</button>
+      <span id="checkModeSaveMsg" style="font-size:.82rem;color:#3ddc84;display:none">✓ 已儲存</span>
+    </div>
+  </div>
+
+  <div class="card">
     <div class="section-title">使用說明</div>
     <div style="font-size:.83rem;color:#666;line-height:1.8">
       <p>• 路徑可以是絕對路徑（推薦），例如 <code style="color:#aaa">D:\YTVideos</code></p>
@@ -819,6 +874,22 @@ async function addJob() {
   btn.innerHTML = '<span class="spinner"></span> 讀取頻道資訊…';
 
   try {
+    // Check for duplicate URL — if already in queue, trigger update check instead
+    const normUrl = url.replace(/\/+$/, "").toLowerCase();
+    const existing = await fetch("/api/jobs").then(r => r.json());
+    const dup = existing.find(j => (j.url || "").replace(/\/+$/, "").toLowerCase() === normUrl);
+    if (dup) {
+      if (dup.status !== "running" && dup.status !== "prefetching") {
+        await fetch(`/api/jobs/${dup.id}/start`, {method: "POST"});
+      }
+      document.getElementById("url").value      = "";
+      document.getElementById("taskName").value = "";
+      nav("queue");
+      expandedJobIds.add(dup.id);
+      loadQueue();
+      return;
+    }
+
     const res = await fetch("/api/jobs", {
       method: "POST",
       headers: {"Content-Type":"application/json"},
@@ -863,6 +934,15 @@ async function loadQueue() {
   list.sort((a,b) => b.created_at.localeCompare(a.created_at));
   renderQueue(list);
 
+  // Detect any job that just transitioned to "done" → invalidate media cache
+  list.forEach(j => {
+    const prev = _jobStatuses[j.id];
+    if (prev && prev !== "done" && j.status === "done") {
+      invalidateMediaCache();
+    }
+    _jobStatuses[j.id] = j.status;
+  });
+
   if (selectedJobId) {
     const job = list.find(j => j.id === selectedJobId);
     if (job) renderLog(job);
@@ -896,7 +976,7 @@ function renderChannelCard(j) {
   const letter = (j.channel_name || j.name || "?")[0].toUpperCase();
   const countStr = total === "?" ? `${dl} 部` : `${dl} / ${total}`;
   const createdDate = j.created_at ? j.created_at.slice(0,10) : "";
-  const updateTag = j.is_update ? ' · <span style="color:#3ddc84">更新檢查</span>' : "";
+  const cookieBadge = j.cookies_file ? `<span class="ch-cookie">🍪 Cookies</span>` : "";
 
   // Helper: render one video item row
   function renderVidItem(v, i) {
@@ -967,8 +1047,8 @@ function renderChannelCard(j) {
     <div class="ch-header" onclick="toggleCard('${j.id}')">
       <div class="ch-avatar">${esc(letter)}</div>
       <div class="ch-info">
-        <div class="ch-name">${esc(j.channel_name || j.name)}</div>
-        <div class="ch-sub">${createdDate}${updateTag} · ${esc(j.url)}</div>
+        <div class="ch-name">${esc(j.channel_name || j.name)}${cookieBadge}</div>
+        <div class="ch-sub">${createdDate} · ${esc(j.url)}</div>
       </div>
       <div class="ch-right">
         <div class="ch-count">${countStr}</div>
@@ -976,6 +1056,9 @@ function renderChannelCard(j) {
           <div class="ch-progress-fill" style="width:${pct}%"></div>
         </div>
         ${statusBadge}
+        ${isRunning
+          ? `<button class="btn btn-danger btn-sm" style="flex-shrink:0" onclick="stopJob('${j.id}',event)">同步檢查中…</button>`
+          : `<button class="btn btn-primary btn-sm" style="flex-shrink:0" onclick="restartJob('${j.id}',event)">更新檢查</button>`}
         <span class="ch-chevron">▶</span>
       </div>
     </div>
@@ -984,8 +1067,17 @@ function renderChannelCard(j) {
     <div class="vid-list">${innerHtml}</div>
 
     <div class="ch-actions">
-      ${j.status !== 'running' && j.status !== 'prefetching'
-        ? `<button class="btn btn-primary btn-sm" onclick="restartJob('${j.id}',event)">重新下載</button>` : ''}
+      <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0">
+        <span style="font-size:.75rem;color:#666;white-space:nowrap">Cookies：</span>
+        <select style="font-size:.78rem;flex:1;min-width:0;max-width:200px"
+          onchange="updateJobCookies('${j.id}',this.value,event)"
+          onclick="event.stopPropagation()">
+          <option value="">不使用</option>
+          ${(window._cookieFiles||[]).map(f =>
+            `<option value="${esc(f)}" ${f === (j.cookies_file||'') ? 'selected' : ''}>${esc(f)}</option>`
+          ).join('')}
+        </select>
+      </div>
       <button class="btn btn-ghost btn-sm" onclick="selectLog('${j.id}',event)">
         ${selectedJobId === j.id && logVisible ? '隱藏紀錄' : '查看紀錄'}
       </button>
@@ -1044,6 +1136,12 @@ async function restartJob(jobId, e) {
   loadQueue();
 }
 
+async function stopJob(jobId, e) {
+  e.stopPropagation();
+  await fetch(`/api/jobs/${jobId}/stop`, {method:"POST"});
+  loadQueue();
+}
+
 async function deleteJob(jobId, e) {
   e.stopPropagation();
   if (!confirm("確定刪除此任務？（已下載的影片不受影響）")) return;
@@ -1067,17 +1165,32 @@ let allMediaData = [];
 let mediaCursor  = 0;
 const TILE_BATCH = 60;
 
+let _mediaCache     = null;  // { key, data }
+let _jobStatuses    = {};    // jobId → last known status (for detecting done transitions)
+
+function _mediaCacheKey() {
+  const search = document.getElementById("mediaSearch")?.value.trim() || "";
+  const folder = document.getElementById("mediaFolder")?.value || "";
+  return `${sortBy}|${sortAsc}|${search}|${folder}`;
+}
+
+function invalidateMediaCache() {
+  _mediaCache = null;
+}
+
 function setSortBy(key) {
   if (sortBy === key) sortAsc = !sortAsc;
   else { sortBy = key; sortAsc = (key === "name"); }
   ["name","date","size"].forEach(k =>
     document.getElementById("sb-"+k)?.classList.toggle("active", k === sortBy));
   document.getElementById("sb-asc").textContent = sortAsc ? "↑" : "↓";
+  invalidateMediaCache();
   loadMedia();
 }
 function toggleSortDir() {
   sortAsc = !sortAsc;
   document.getElementById("sb-asc").textContent = sortAsc ? "↑" : "↓";
+  invalidateMediaCache();
   loadMedia();
 }
 function setTileSize(v) {
@@ -1099,7 +1212,21 @@ async function loadFolders() {
   });
 }
 
-async function loadMedia() {
+function _applyMediaData(data) {
+  allMediaData = data;
+  mediaCursor  = 0;
+  const wall = document.getElementById("tvWall");
+  wall.innerHTML = "";
+  if (!data.length) {
+    wall.innerHTML = '<div class="empty" style="grid-column:1/-1">沒有找到影片</div>';
+    document.getElementById("mediaMore").style.display = "none";
+    return;
+  }
+  renderNextBatch();
+  initScrollObserver();
+}
+
+async function loadMedia(background = false) {
   const search = document.getElementById("mediaSearch").value.trim();
   const folder = document.getElementById("mediaFolder").value;
   const params = new URLSearchParams({ sort: sortBy, asc: sortAsc });
@@ -1108,21 +1235,40 @@ async function loadMedia() {
 
   const wall    = document.getElementById("tvWall");
   const loading = document.getElementById("mediaLoading");
-  wall.innerHTML = "";
-  loading.style.display = "block";
+  const cacheKey = _mediaCacheKey();
 
-  const res  = await fetch("/api/media?" + params);
-  allMediaData  = await res.json();
-  mediaCursor   = 0;
-  loading.style.display = "none";
-  document.getElementById("tvWall").innerHTML = "";
-  if (!allMediaData.length) {
-    document.getElementById("tvWall").innerHTML = '<div class="empty" style="grid-column:1/-1">沒有找到影片</div>';
-    document.getElementById("mediaMore").style.display = "none";
+  // If cache valid for current params → show instantly, refresh in background
+  if (!background && _mediaCache && _mediaCache.key === cacheKey) {
+    loading.style.display = "none";
+    _applyMediaData(_mediaCache.data);
+    // Trigger silent background refresh
+    loadMedia(true);
     return;
   }
-  renderNextBatch();
-  initScrollObserver();
+
+  // Background refresh: fetch silently, update only if changed + not scrolled far
+  if (background) {
+    try {
+      const res   = await fetch("/api/media?" + params);
+      const fresh = await res.json();
+      const oldKeys = (_mediaCache?.data || []).map(f => f.rel_path).join(",");
+      const newKeys = fresh.map(f => f.rel_path).join(",");
+      _mediaCache = { key: cacheKey, data: fresh };
+      if (oldKeys !== newKeys && window.scrollY < 300) {
+        _applyMediaData(fresh);
+      }
+    } catch {}
+    return;
+  }
+
+  // No cache: show spinner, fetch, render
+  wall.innerHTML = "";
+  loading.style.display = "block";
+  const res  = await fetch("/api/media?" + params);
+  const data = await res.json();
+  _mediaCache = { key: cacheKey, data };
+  loading.style.display = "none";
+  _applyMediaData(data);
 }
 
 let _scrollObserver = null;
@@ -1491,6 +1637,7 @@ async function deleteChecked() {
 async function loadCookieOpts() {
   const res   = await fetch("/api/cookies");
   const files = await res.json();
+  window._cookieFiles = files;   // cache for use in channel cards
   const sel   = document.getElementById("cookiesSelect");
   const cur   = sel.value;
   sel.innerHTML = '<option value="">不使用 Cookies</option>';
@@ -1501,6 +1648,16 @@ async function loadCookieOpts() {
     sel.appendChild(o);
   });
   onCookiesChange();
+}
+
+async function updateJobCookies(jobId, cookiesFile, e) {
+  e.stopPropagation();
+  await fetch(`/api/jobs/${jobId}`, {
+    method: "PATCH",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ cookies_file: cookiesFile || null })
+  });
+  loadQueue();
 }
 
 function onCookiesChange() {
@@ -1574,6 +1731,26 @@ async function loadSettings() {
   const data = await res.json();
   document.getElementById("settingDownloadDir").value = data.download_dir || "";
   document.getElementById("currentDownloadDir").textContent = data.download_dir || "（未設定）";
+  const mode = data.check_mode || "full";
+  const radio = document.querySelector(`input[name=checkMode][value="${mode}"]`);
+  if (radio) radio.checked = true;
+  document.getElementById("recentCountInput").value = data.recent_count || 50;
+  document.getElementById("recentCountRow").style.display = mode === "recent" ? "flex" : "none";
+}
+
+async function saveCheckMode() {
+  const mode  = document.querySelector('input[name=checkMode]:checked')?.value || "full";
+  const count = parseInt(document.getElementById("recentCountInput").value) || 50;
+  const msg   = document.getElementById("checkModeSaveMsg");
+  const dir   = document.getElementById("settingDownloadDir").value.trim()
+              || document.getElementById("currentDownloadDir").textContent;
+  await fetch("/api/settings", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ download_dir: dir, check_mode: mode, recent_count: count })
+  });
+  msg.style.display = "inline";
+  setTimeout(() => { msg.style.display = "none"; }, 2500);
 }
 
 async function saveSettings() {

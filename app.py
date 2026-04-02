@@ -15,12 +15,15 @@ SETTINGS_FILE = DATA_DIR / "settings.json"
 COOKIES_DIR.mkdir(exist_ok=True)
 
 jobs: dict = {}
-jobs_lock = threading.Lock()
+jobs_lock    = threading.Lock()
+_stop_flags: dict[str, threading.Event] = {}   # job_id → Event; set to stop download
 
 # ── Settings ──────────────────────────────────────────────────────────────────
 
 _DEFAULT_SETTINGS = {
-    "download_dir": os.environ.get("DOWNLOAD_DIR", str(Path("downloads").absolute())),
+    "download_dir":  os.environ.get("DOWNLOAD_DIR", str(Path("downloads").absolute())),
+    "check_mode":    "full",   # "full" | "fast" | "recent"
+    "recent_count":  50,
 }
 
 def load_settings() -> dict:
@@ -55,6 +58,37 @@ AUDIO_EXTS = {".m4a", ".mp3", ".opus", ".aac", ".ogg", ".flac", ".wav"}
 IMG_EXTS   = {".jpg", ".jpeg", ".png", ".webp"}
 
 
+def _sync_video_title(output_dir: Path, vid_id: str, old_title: str, new_title: str, log_fn):
+    """Rename the video folder and all files inside when a YouTube title has changed."""
+    if not old_title or not new_title or old_title == new_title:
+        return
+    old_name = sanitize_dirname(old_title)
+    new_name = sanitize_dirname(new_title)
+    if old_name == new_name:
+        return
+    old_folder = output_dir / old_name
+    new_folder = output_dir / new_name
+    if not old_folder.exists() or not old_folder.is_dir():
+        return
+    if new_folder.exists():
+        log_fn(f"[warn] 標題重新命名衝突：「{new_name}」已存在，略過 {vid_id}")
+        return
+    # Rename all files inside the folder whose name starts with the old folder name
+    for f in list(old_folder.iterdir()):
+        if f.is_file() and f.name.startswith(old_name):
+            new_filename = new_name + f.name[len(old_name):]
+            try:
+                f.rename(old_folder / new_filename)
+            except Exception as e:
+                log_fn(f"[warn] 重新命名檔案失敗：{f.name} → {new_filename}：{e}")
+    # Rename the folder itself
+    try:
+        old_folder.rename(new_folder)
+        log_fn(f"[info] 影片標題已更新：「{old_name}」→「{new_name}」({vid_id})")
+    except Exception as e:
+        log_fn(f"[warn] 重新命名資料夾失敗：{old_name} → {new_name}：{e}")
+
+
 # ── Persistence ───────────────────────────────────────────────────────────────
 
 def load_jobs():
@@ -72,7 +106,33 @@ def save_jobs():
         json.dump(jobs, f, ensure_ascii=False, indent=2)
 
 
-jobs = load_jobs()
+def _recover_interrupted_jobs(jobs_dict: dict):
+    """On startup, any job still in running/prefetching was killed mid-download.
+    Reset them to error so the user can re-trigger via 更新檢查."""
+    for job in jobs_dict.values():
+        if job.get("status") in ("running", "prefetching"):
+            job["status"]      = "error"
+            job["finished_at"] = datetime.now().isoformat()
+            job["logs"]        = job.get("logs", []) + ["[warn] 服務重啟，下載中斷，請點「更新檢查」繼續"]
+            # Reset stuck video states so progress is accurate on next run
+            for v in job.get("videos", {}).values():
+                if v.get("status") in ("downloading", "pending"):
+                    v["status"]    = "error"
+                    v["error_msg"] = "服務重啟中斷"
+                    v["percent"]   = 0
+                    v["speed"]     = None
+    return jobs_dict
+
+
+# Clean up any leftover temp cookie files from a previous interrupted run
+for _f in COOKIES_DIR.glob("*.tmp_dl.txt"):
+    try: _f.unlink()
+    except Exception: pass
+
+jobs = _recover_interrupted_jobs(load_jobs())
+# Persist recovery immediately so restarts don't keep old stale state
+with open(JOBS_FILE, "w", encoding="utf-8") as _f:
+    json.dump(jobs, _f, ensure_ascii=False, indent=2)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -161,10 +221,11 @@ def _fetch_flat(url: str, opts: dict) -> tuple[list, dict]:
         return [], {}
 
 
-def fetch_channel_info(url: str, cookies_file: str | None):
+def fetch_channel_info(url: str, cookies_file: str | None, max_items: int | None = None):
     """Return (channel_name, total_count, entries_list).
     For channel root URLs, fetches /videos and /shorts tabs separately and merges.
     Fetching the root URL only returns tab-level playlist stubs, not actual videos.
+    max_items: if set, only fetch the most recent N items per tab (playlistend).
     """
     opts = {
         "quiet":        True,
@@ -175,6 +236,8 @@ def fetch_channel_info(url: str, cookies_file: str | None):
         p = COOKIES_DIR / cookies_file
         if p.exists():
             opts["cookiefile"] = str(p)
+    if max_items:
+        opts["playlistend"] = max_items
 
     channel_name = None
 
@@ -219,14 +282,22 @@ def fetch_channel_info(url: str, cookies_file: str | None):
 
 
 def run_download(job_id: str):
+    # Register a stop flag for this run; cleared when done
+    _stop_event = threading.Event()
+    _stop_flags[job_id] = _stop_event
+
     with jobs_lock:
         job = jobs.get(job_id)
         if not job:
+            _stop_flags.pop(job_id, None)
             return
         job["status"] = "prefetching"
         job["logs"] = []
         job["downloaded"] = 0
         job["errors"] = 0
+        # Preserve previous video list for fast/recent modes so it's not wiped;
+        # full mode rebuilds from scratch via prefetch
+        _prev_videos = dict(job.get("videos", {}))
         job["videos"] = {}
         job["is_update"] = False
         save_jobs()
@@ -246,6 +317,16 @@ def run_download(job_id: str):
     folder_name  = snap["folder_name"]
     base_dir     = get_download_dir()
     output_dir   = base_dir / folder_name
+
+    # Make a read-only temp copy of the cookies file so yt-dlp cannot write back
+    # updated tokens and corrupt the original.
+    _tmp_cookie_path = None
+    if cookies_file:
+        _src = COOKIES_DIR / cookies_file
+        if _src.exists():
+            _tmp_cookie_path = _src.with_suffix(".tmp_dl.txt")
+            shutil.copy2(_src, _tmp_cookie_path)
+            cookies_file = _tmp_cookie_path.name   # point yt-dlp at the copy
 
     # Auto-migrate legacy folders whose name differs only by unsanitized chars
     # e.g. "Runway Chronicles#"  →  "Runway Chronicles"
@@ -277,31 +358,66 @@ def run_download(job_id: str):
                 jobs[job_id]["is_update"] = True
             log(f"[info] 發現已下載紀錄（{len(existing_archive_ids)} 部），將只下載新影片")
 
-    # Stage 1: prefetch video list
-    log("[info] 正在讀取頻道資訊…")
-    channel_name, total, entries = fetch_channel_info(url, cookies_file)
+    # Check mode
+    _s          = load_settings()
+    check_mode  = _s.get("check_mode", "full")
+    recent_count = int(_s.get("recent_count", 50))
 
-    with jobs_lock:
-        jobs[job_id]["total_videos"] = total
-        jobs[job_id]["channel_name"] = channel_name or jobs[job_id].get("channel_name")
+    if check_mode == "fast":
+        log("[info] 快速模式：略過清單讀取，直接下載（yt-dlp 以存檔紀錄自動略過已下載影片）")
+        with jobs_lock:
+            jobs[job_id]["status"]    = "running"
+            jobs[job_id]["is_update"] = bool(existing_archive_ids)
+            # Restore previous video list so the UI isn't blank
+            jobs[job_id]["videos"]    = _prev_videos
+            save_jobs()
+    else:
+        # Stage 1: prefetch video list
+        if check_mode == "recent":
+            log(f"[info] 最近模式：讀取最近 {recent_count} 部影片…")
+            channel_name, total, entries = fetch_channel_info(url, cookies_file, max_items=recent_count)
+        else:
+            log("[info] 完整模式：正在讀取完整頻道清單…")
+            channel_name, total, entries = fetch_channel_info(url, cookies_file)
+
+    if check_mode in ("full", "recent"):
+        # Sync titles: rename local folders/files for videos whose title changed
+        renamed = 0
         for e in entries:
-            vid_id = e.get("id", "")
-            if vid_id:
-                # Mark immediately as exists if already in archive
-                init_status = "exists" if vid_id in existing_archive_ids else "pending"
-                jobs[job_id]["videos"][vid_id] = {
-                    "id":        vid_id,
-                    "title":     e.get("title") or vid_id,
-                    "status":    init_status,
-                    "error_msg": "",
-                    "percent":   0,
-                    "speed":     None,
-                    "kind":      e.get("_kind", "video"),
-                }
-        jobs[job_id]["status"] = "running"
-        save_jobs()
+            vid_id    = e.get("id", "")
+            new_title = e.get("title") or ""
+            if vid_id and new_title and vid_id in _prev_videos:
+                old_title = _prev_videos[vid_id].get("title", "")
+                if old_title and old_title != new_title:
+                    _sync_video_title(output_dir, vid_id, old_title, new_title, log)
+                    renamed += 1
+        if renamed:
+            log(f"[info] 已同步 {renamed} 部影片的標題變更")
 
-    log(f"[info] 共 {total} 部影片，開始下載")
+        with jobs_lock:
+            jobs[job_id]["total_videos"] = total
+            jobs[job_id]["channel_name"] = channel_name or jobs[job_id].get("channel_name")
+            # For recent mode, also keep old videos not in the new slice
+            if check_mode == "recent":
+                for vid_id, v in _prev_videos.items():
+                    if vid_id not in jobs[job_id]["videos"]:
+                        jobs[job_id]["videos"][vid_id] = v
+            for e in entries:
+                vid_id = e.get("id", "")
+                if vid_id:
+                    init_status = "exists" if vid_id in existing_archive_ids else "pending"
+                    jobs[job_id]["videos"][vid_id] = {
+                        "id":        vid_id,
+                        "title":     e.get("title") or vid_id,
+                        "status":    init_status,
+                        "error_msg": "",
+                        "percent":   0,
+                        "speed":     None,
+                        "kind":      e.get("_kind", "video"),
+                    }
+            jobs[job_id]["status"] = "running"
+            save_jobs()
+        log(f"[info] 共 {total} 部影片，開始下載")
 
     # Stage 2: actual download
     exclude_kws = [k.strip() for k in filters.get("exclude_keywords", "").split(",") if k.strip()]
@@ -438,29 +554,30 @@ def run_download(job_id: str):
             dl_opts["cookiefile"] = str(p)
             log(f"[info] 使用 cookies: {cookies_file}")
 
-    # Build ordered URL list from prefetch
-    # - Skip invalid IDs (not exactly 11 chars — channel/playlist IDs)
-    # - Skip already-archived videos (marked "exists") to avoid redundant network checks
-    with jobs_lock:
-        all_vid_items = list(jobs[job_id]["videos"].items())
-
-    invalid_ids = [vid_id for vid_id, v in all_vid_items if len(vid_id) != 11]
-    if invalid_ids:
-        log(f"[info] 跳過 {len(invalid_ids)} 個無效 ID（非影片）：{', '.join(invalid_ids[:5])}")
+    # Build download URL list
+    # Fast mode: pass the original channel/playlist URL directly to yt-dlp
+    # Full mode: use the pre-fetched per-video URLs, skipping "exists" ones
+    if check_mode == "fast":
+        ordered_urls = [url]
+    else:
         with jobs_lock:
-            for vid_id in invalid_ids:
-                if vid_id in jobs[job_id]["videos"]:
-                    jobs[job_id]["videos"][vid_id]["status"] = "skipped"
-                    jobs[job_id]["videos"][vid_id]["error_msg"] = "非影片項目（頻道/播放清單 ID）"
+            all_vid_items = list(jobs[job_id]["videos"].items())
 
-    # Only queue "pending" videos — "exists" ones are already in archive, no need to re-check
-    pending_ids = [vid_id for vid_id, v in all_vid_items
-                   if len(vid_id) == 11 and v["status"] == "pending"]
-    ordered_urls = [f"https://www.youtube.com/watch?v={vid_id}" for vid_id in pending_ids]
+        invalid_ids = [vid_id for vid_id, v in all_vid_items if len(vid_id) != 11]
+        if invalid_ids:
+            log(f"[info] 跳過 {len(invalid_ids)} 個無效 ID（非影片）：{', '.join(invalid_ids[:5])}")
+            with jobs_lock:
+                for vid_id in invalid_ids:
+                    if vid_id in jobs[job_id]["videos"]:
+                        jobs[job_id]["videos"][vid_id]["status"] = "skipped"
+                        jobs[job_id]["videos"][vid_id]["error_msg"] = "非影片項目（頻道/播放清單 ID）"
 
-    # Apply max_videos limit on ordered list
-    if filters.get("max_videos"):
-        ordered_urls = ordered_urls[:int(filters["max_videos"])]
+        pending_ids = [vid_id for vid_id, v in all_vid_items
+                       if len(vid_id) == 11 and v["status"] == "pending"]
+        ordered_urls = [f"https://www.youtube.com/watch?v={vid_id}" for vid_id in pending_ids]
+
+        if filters.get("max_videos"):
+            ordered_urls = ordered_urls[:int(filters["max_videos"])]
 
     # Remove playlistend since we're controlling order/count ourselves
     dl_opts.pop("playlistend", None)
@@ -468,6 +585,9 @@ def run_download(job_id: str):
     try:
         with yt_dlp.YoutubeDL(dl_opts) as ydl:
             for video_url in ordered_urls:
+                if _stop_event.is_set():
+                    log("[info] 使用者強制停止下載")
+                    break
                 vid_id = video_url.split("v=")[-1]
                 _cur["vid_id"]    = vid_id
                 _cur["last_error"] = None
@@ -514,6 +634,14 @@ def run_download(job_id: str):
             jobs[job_id]["logs"].append(f"[error] {e}")
             jobs[job_id]["finished_at"] = datetime.now().isoformat()
             save_jobs()
+    finally:
+        _stop_flags.pop(job_id, None)
+        # Remove the temp cookies copy regardless of success/failure
+        if _tmp_cookie_path and _tmp_cookie_path.exists():
+            try:
+                _tmp_cookie_path.unlink()
+            except Exception:
+                pass
 
 
 # ── REST: Jobs ────────────────────────────────────────────────────────────────
@@ -585,6 +713,19 @@ def create_job():
     return jsonify(job), 201
 
 
+@app.route("/api/jobs/<job_id>", methods=["PATCH"])
+def patch_job(job_id):
+    data = request.json or {}
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if not job:
+            return jsonify({"error": "not found"}), 404
+        if "cookies_file" in data:
+            job["cookies_file"] = data["cookies_file"] or None
+        save_jobs()
+    return jsonify({"ok": True})
+
+
 @app.route("/api/jobs/<job_id>", methods=["GET"])
 def get_job(job_id):
     with jobs_lock:
@@ -603,6 +744,21 @@ def start_job(job_id):
     if job["status"] == "running":
         return jsonify({"error": "already running"}), 400
     threading.Thread(target=run_download, args=(job_id,), daemon=True).start()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/jobs/<job_id>/stop", methods=["POST"])
+def stop_job(job_id):
+    flag = _stop_flags.get(job_id)
+    if flag:
+        flag.set()
+    with jobs_lock:
+        job = jobs.get(job_id)
+        if job and job["status"] in ("running", "prefetching"):
+            job["status"]      = "error"
+            job["finished_at"] = datetime.now().isoformat()
+            job["logs"].append("[info] 使用者強制停止")
+            save_jobs()
     return jsonify({"ok": True})
 
 
@@ -873,7 +1029,10 @@ def rename_media():
 
 @app.route("/api/cookies", methods=["GET"])
 def list_cookies():
-    return jsonify([f.name for f in COOKIES_DIR.iterdir() if f.is_file() and f.suffix == ".txt"])
+    return jsonify([
+        f.name for f in COOKIES_DIR.iterdir()
+        if f.is_file() and f.suffix == ".txt" and not f.name.endswith(".tmp_dl.txt")
+    ])
 
 
 @app.route("/api/cookies", methods=["POST"])
@@ -918,6 +1077,13 @@ def update_settings():
         return jsonify({"error": f"無法建立資料夾：{e}"}), 400
 
     settings["download_dir"] = str(path.absolute())
+    if "check_mode" in data and data["check_mode"] in ("full", "fast", "recent"):
+        settings["check_mode"] = data["check_mode"]
+    if "recent_count" in data:
+        try:
+            settings["recent_count"] = max(1, int(data["recent_count"]))
+        except (ValueError, TypeError):
+            pass
     save_settings(settings)
     return jsonify({"ok": True, "settings": settings})
 
