@@ -7,34 +7,6 @@ Single-page Web UI + Python/Flask backend, powered by yt-dlp.
 
 ---
 
-## Changelog
-
-### v1.1 (2026-04-02)
-
-**New Features**
-- **Fullscreen overlay player** — clicking a video when the floating player is disabled now opens a fullscreen overlay player with close / fullscreen controls
-- **Three check modes** — choose in Settings: *Full* (fetch entire channel), *Recent-N* (fetch latest N videos), or *Fast* (skip prefetch, start downloading immediately)
-- **Force stop download** — the "更新檢查" button changes to "同步檢查中…" while running; clicking again force-stops the download
-- **YouTube title sync** — when a video's title changes on YouTube, the local folder and all files are automatically renamed to match (Full / Recent-N modes)
-- **Media library cache** — switching to the Media tab is now instant; data is served from cache while a background refresh runs silently
-- **Per-job cookies selector** — each channel card has its own cookies dropdown to override the global setting
-- **Cookies upload validation** — the app checks for required Google auth tokens when you upload a cookies.txt file, with a warning if they are missing
-- **Cookies tutorial modal** — a step-by-step guide inside the "Add Channel" page explains how to export cookies correctly
-
-**Changes**
-- "更新檢查" button moved to the channel card header (always visible, no need to expand)
-- Cookie badge shown next to the channel name when cookies are configured
-- Adding a duplicate channel URL now triggers an update check instead of creating a new entry
-
-**Bug Fixes**
-- **Cookies corruption** — yt-dlp was writing updated tokens back to the original cookies file; now uses a temporary copy during download to preserve the original
-- **Service restart recovery** — jobs stuck in "running" state after a server restart are automatically reset to an error state on the next startup
-- **Mobile floating player** — fixed: browser context menu appearing on long press, TV wall scrolling during drag, player width/height exceeding the viewport
-- **Real error messages** — yt-dlp errors are now surfaced per-video in the queue instead of showing a generic failure message
-- **Fast mode empty list** — switching to Fast mode no longer clears the existing video list immediately
-
----
-
 ## Features
 
 ### Download Management
@@ -141,34 +113,6 @@ downloads/
 
 輕量化 YouTube 頻道 / 播放清單下載管理工具，靈感來自 [Pinchflat](https://github.com/kieraneglin/pinchflat)。
 單頁 Web 介面 + Python/Flask 後端，核心下載引擎為 yt-dlp。
-
----
-
-## 更新紀錄
-
-### v1.1 (2026-04-02)
-
-**新功能**
-- **全螢幕覆蓋播放器** — 關閉懸浮視窗後，點擊電視牆影片將開啟全螢幕覆蓋播放器，支援關閉與進入全螢幕操作
-- **三種同步檢查模式** — 可在設定頁面選擇：*完整*（抓取全部影片）、*最近 N 部*（只抓最新的 N 部）、*快速*（跳過預抓，直接開始下載）
-- **強制停止下載** — 點擊「更新檢查」後按鈕變為「同步檢查中…」；再次點擊可立即強制終止
-- **YouTube 標題同步** — 若影片在 YouTube 上改名，本地資料夾與所有相關檔案將自動更名（完整 / 最近模式）
-- **影片管理快取** — 切換至影片管理分頁時立即顯示快取資料，同時在背景靜默刷新
-- **逐頻道 Cookies 選擇** — 每張頻道卡片可獨立設定使用的 Cookies 檔案
-- **Cookies 上傳驗證** — 上傳 cookies.txt 時自動檢查是否包含必要的 Google 認證 Token，若缺少則發出警告
-- **Cookies 匯出教學彈窗** — 「新增頻道」頁面內建步驟說明，引導使用者正確匯出 Cookies
-
-**異動**
-- 「更新檢查」按鈕移至頻道卡片標題列，無需展開即可點擊
-- 已設定 Cookies 的頻道名稱旁顯示 🍪 徽章
-- 輸入重複的頻道網址時，自動觸發更新檢查而非新增重複項目
-
-**錯誤修復**
-- **Cookies 被覆寫** — yt-dlp 下載後會回寫 Token 至原始 Cookies 檔案；現改為使用暫存副本，保護原始檔案不被修改
-- **服務重啟後任務卡住** — 重啟服務後，原本停在「下載中」的任務現在會自動重設為錯誤狀態
-- **手機版懸浮播放器** — 修正長按出現系統右鍵選單、拖曳時電視牆跟著滾動、播放器超出螢幕邊界等問題
-- **真實錯誤訊息** — yt-dlp 的錯誤訊息現在會逐部影片顯示在下載佇列，不再只顯示通用失敗提示
-- **快速模式清空影片清單** — 切換為快速模式後不再立即清空原有的影片清單
 
 ---
 
