@@ -1,0 +1,20 @@
+# Runtime data
+data/
+downloads/
+cookies/
+jobs.json
+settings.json
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.env
+
+# Claude Code
+CLAUDE.md
+
+# IDE
+.idea/
+.vscode/
+*.iml

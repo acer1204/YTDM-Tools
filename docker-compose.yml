@@ -1,0 +1,13 @@
+services:
+  ytdl:
+    build: .
+    container_name: YTDM-Tool
+    restart: unless-stopped
+    ports:
+      - "7321:5000"
+    volumes:
+      - D:/YTDownload/downloads:/app/downloads   # 影片下載路徑
+      - D:/YTDownload/data:/app/data                        # settings.json / jobs.json / cookies
+    environment:
+      - DOWNLOAD_DIR=/app/downloads
+      - DATA_DIR=/app/data
