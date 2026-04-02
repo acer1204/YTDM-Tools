@@ -7,6 +7,37 @@ Single-page Web UI + Python/Flask backend, powered by yt-dlp.
 
 ---
 
+## Screenshots
+
+<table>
+  <tr>
+    <td align="center"><b>Add Channel</b></td>
+    <td align="center"><b>Download Filters</b></td>
+  </tr>
+  <tr>
+    <td><img src="screencapture/Add Channel 01.png" width="400"/></td>
+    <td><img src="screencapture/Add Channel 02.png" width="400"/></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Download Queue</b></td>
+    <td align="center"><b>Media Library</b></td>
+  </tr>
+  <tr>
+    <td><img src="screencapture/Download Queue 01.png" width="400"/></td>
+    <td><img src="screencapture/Media Library 01.png" width="400"/></td>
+  </tr>
+  <tr>
+    <td align="center"><b>Duplicate Detection</b></td>
+    <td align="center"><b>Settings</b></td>
+  </tr>
+  <tr>
+    <td><img src="screencapture/Duplicate Detection 01.png" width="400"/></td>
+    <td><img src="screencapture/Settings 01.png" width="400"/></td>
+  </tr>
+</table>
+
+---
+
 ## Features
 
 ### Download Management
@@ -113,6 +144,37 @@ downloads/
 
 輕量化 YouTube 頻道 / 播放清單下載管理工具，靈感來自 [Pinchflat](https://github.com/kieraneglin/pinchflat)。
 單頁 Web 介面 + Python/Flask 後端，核心下載引擎為 yt-dlp。
+
+---
+
+## 截圖
+
+<table>
+  <tr>
+    <td align="center"><b>新增頻道</b></td>
+    <td align="center"><b>下載條件篩選</b></td>
+  </tr>
+  <tr>
+    <td><img src="screencapture/Add Channel 01.png" width="400"/></td>
+    <td><img src="screencapture/Add Channel 02.png" width="400"/></td>
+  </tr>
+  <tr>
+    <td align="center"><b>下載佇列</b></td>
+    <td align="center"><b>影片管理</b></td>
+  </tr>
+  <tr>
+    <td><img src="screencapture/Download Queue 01.png" width="400"/></td>
+    <td><img src="screencapture/Media Library 01.png" width="400"/></td>
+  </tr>
+  <tr>
+    <td align="center"><b>重複偵測</b></td>
+    <td align="center"><b>設定</b></td>
+  </tr>
+  <tr>
+    <td><img src="screencapture/Duplicate Detection 01.png" width="400"/></td>
+    <td><img src="screencapture/Settings 01.png" width="400"/></td>
+  </tr>
+</table>
 
 ---
 
