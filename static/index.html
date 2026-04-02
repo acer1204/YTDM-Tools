@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-TW">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -430,6 +430,23 @@ input:focus, select:focus { border-color: #7c6dfa; }
 }
 .divider { height: 1px; background: #1e1e2e; margin: 18px 0; }
 .text-muted { color: #555; font-size: .8rem; }
+
+/* ═══════════ PAGE 5: Settings grid ═══════════ */
+.settings-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  max-width: 1100px;
+  margin: 0 auto;
+  align-items: start;
+}
+.sg-full { grid-column: 1 / -1; }
+@media (max-width: 720px) {
+  .settings-grid { grid-template-columns: 1fr; }
+  .sg-full { grid-column: 1; }
+}
+.lang-btns { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
+.lang-btn-active { background: #7c6dfa !important; color: #fff !important; border-color: #7c6dfa !important; }
 </style>
 </head>
 <body>
@@ -437,87 +454,87 @@ input:focus, select:focus { border-color: #7c6dfa; }
 <!-- ── Navigation ── -->
 <nav class="nav">
   <div class="nav-logo">▶ YTDLoader</div>
-  <div class="nav-tab active"  id="tab-add"     onclick="nav('add')">新增頻道</div>
-  <div class="nav-tab"         id="tab-queue"   onclick="nav('queue')">下載佇列</div>
-  <div class="nav-tab"         id="tab-media"   onclick="nav('media')">影片管理</div>
-  <div class="nav-tab"         id="tab-similar"   onclick="nav('similar')">重複偵測</div>
-  <div class="nav-tab"         id="tab-settings"  onclick="nav('settings')">設定</div>
+  <div class="nav-tab active"  id="tab-add"      onclick="nav('add')"      data-i18n="nav_add">Add Channel</div>
+  <div class="nav-tab"         id="tab-queue"    onclick="nav('queue')"    data-i18n="nav_queue">Download Queue</div>
+  <div class="nav-tab"         id="tab-media"    onclick="nav('media')"    data-i18n="nav_media">Media Library</div>
+  <div class="nav-tab"         id="tab-similar"  onclick="nav('similar')"  data-i18n="nav_similar">Duplicate Detection</div>
+  <div class="nav-tab"         id="tab-settings" onclick="nav('settings')" data-i18n="nav_settings">Settings</div>
 </nav>
 
 <!-- ══════════════════════ PAGE 1: Add Channel ══════════════════════ -->
 <div class="page active" id="page-add">
 
   <div class="card">
-    <div class="section-title">基本設定</div>
+    <div class="section-title" data-i18n="p1_title">Basic Settings</div>
 
-    <label>頻道 / 播放清單 URL</label>
+    <label data-i18n="p1_url">Channel / Playlist URL</label>
     <input type="text" id="url" placeholder="https://www.youtube.com/@ChannelName">
 
-    <label>自訂名稱（選填）</label>
-    <input type="text" id="taskName" placeholder="留空則自動讀取頻道名稱">
+    <label data-i18n="p1_name">Custom Name (optional)</label>
+    <input type="text" id="taskName" data-i18n-placeholder="p1_name_ph" placeholder="Leave empty to auto-detect channel name">
 
-    <label>登入 Cookies（年齡限制 / 會員影片）</label>
-    <div class="ck-hint" style="color:#f0a500">推薦使用「<strong>Get cookies.txt LOCALLY</strong>」擴充套件匯出 &nbsp;<button class="btn-tutorial" onclick="openCkTutorial()">教學</button></div>
+    <label data-i18n="p1_cookies_label">Login Cookies (Age-restricted / Members-only)</label>
+    <div class="ck-hint" style="color:#f0a500"><span data-i18n="p1_cookies_hint_text">Recommended: "Get cookies.txt LOCALLY" extension</span> &nbsp;<button class="btn-tutorial" onclick="openCkTutorial()" data-i18n="p1_tutorial">Tutorial</button></div>
     <div class="cookies-row">
       <select id="cookiesSelect" onchange="onCookiesChange()">
-        <option value="">不使用 Cookies</option>
+        <option value="" data-i18n="p1_no_cookies">No Cookies</option>
       </select>
-      <span class="ck-badge" id="cookiesTag">已選取</span>
-      <label class="upload-lbl" for="ckFileInput">上傳 cookies.txt</label>
+      <span class="ck-badge" id="cookiesTag" data-i18n="p1_cookies_selected">Selected</span>
+      <label class="upload-lbl" for="ckFileInput" data-i18n="p1_upload_cookies">Upload cookies.txt</label>
       <input type="file" id="ckFileInput" accept=".txt" style="display:none" onchange="uploadCookies(this)">
-      <button class="btn btn-ghost btn-sm" onclick="openCkMgr()">管理</button>
+      <button class="btn btn-ghost btn-sm" onclick="openCkMgr()" data-i18n="p1_manage">Manage</button>
     </div>
   </div>
 
   <div class="card">
-    <button class="filter-toggle" onclick="toggleFilter()">▶ 下載條件篩選</button>
+    <button class="filter-toggle" onclick="toggleFilter()">▶ <span data-i18n="p1_filter_toggle">Download Filters</span></button>
     <div class="filter-body" id="filterBody">
       <div class="row2">
         <div>
-          <label>最短時長（秒）</label>
-          <input type="number" id="f_min_dur" placeholder="例：60">
+          <label data-i18n="p1_min_dur">Min Duration (sec)</label>
+          <input type="number" id="f_min_dur" data-i18n-placeholder="p1_min_dur_ph" placeholder="e.g. 60">
         </div>
         <div>
-          <label>最長時長（秒）</label>
-          <input type="number" id="f_max_dur" placeholder="例：3600">
+          <label data-i18n="p1_max_dur">Max Duration (sec)</label>
+          <input type="number" id="f_max_dur" data-i18n-placeholder="p1_max_dur_ph" placeholder="e.g. 3600">
         </div>
       </div>
       <div class="row2">
         <div>
-          <label>上傳日期起（YYYYMMDD）</label>
-          <input type="text" id="f_date_after" placeholder="例：20230101">
+          <label data-i18n="p1_date_after">Upload Date From (YYYYMMDD)</label>
+          <input type="text" id="f_date_after" data-i18n-placeholder="p1_date_after_ph" placeholder="e.g. 20230101">
         </div>
         <div>
-          <label>上傳日期止（YYYYMMDD）</label>
-          <input type="text" id="f_date_before" placeholder="例：20241231">
+          <label data-i18n="p1_date_before">Upload Date To (YYYYMMDD)</label>
+          <input type="text" id="f_date_before" data-i18n-placeholder="p1_date_before_ph" placeholder="e.g. 20241231">
         </div>
       </div>
       <div class="row2">
         <div>
-          <label>最少觀看次數</label>
-          <input type="number" id="f_min_views" placeholder="例：1000">
+          <label data-i18n="p1_min_views">Min View Count</label>
+          <input type="number" id="f_min_views" data-i18n-placeholder="p1_min_views_ph" placeholder="e.g. 1000">
         </div>
         <div>
-          <label>最多下載幾部</label>
-          <input type="number" id="f_max_vids" placeholder="留空 = 全部">
+          <label data-i18n="p1_max_vids">Max Videos</label>
+          <input type="number" id="f_max_vids" data-i18n-placeholder="p1_max_vids_ph" placeholder="Empty = all">
         </div>
       </div>
-      <label>排除關鍵字（逗號分隔）</label>
-      <input type="text" id="f_exclude" placeholder="例：shorts, 廣告, live">
-      <label>必須關鍵字（逗號分隔，標題需含其中一個）</label>
-      <input type="text" id="f_require" placeholder="例：教學, tutorial, review">
-      <label>畫質</label>
+      <label data-i18n="p1_exclude_kw">Exclude Keywords (comma-separated)</label>
+      <input type="text" id="f_exclude" data-i18n-placeholder="p1_exclude_kw_ph" placeholder="e.g. shorts, ad, live">
+      <label data-i18n="p1_require_kw">Required Keywords (comma-separated, title must contain one)</label>
+      <input type="text" id="f_require" data-i18n-placeholder="p1_require_kw_ph" placeholder="e.g. tutorial, review">
+      <label data-i18n="p1_quality">Quality</label>
       <select id="f_quality">
-        <option value="best">最佳畫質</option>
+        <option value="best" data-i18n="p1_quality_best">Best Quality</option>
         <option value="720p">720p</option>
         <option value="480p">480p</option>
-        <option value="audio_only">僅音訊（m4a）</option>
+        <option value="audio_only" data-i18n="p1_quality_audio">Audio Only (m4a)</option>
       </select>
     </div>
   </div>
 
   <button class="btn btn-primary" id="addBtn" onclick="addJob()" style="width:100%;padding:13px">
-    <span>加入下載佇列</span>
+    <span data-i18n="p1_add_btn">Add to Download Queue</span>
   </button>
 
 </div>
@@ -529,7 +546,7 @@ input:focus, select:focus { border-color: #7c6dfa; }
   <!-- Log panel for selected job -->
   <div id="logPanel" style="display:none">
     <div class="divider"></div>
-    <div class="section-title" id="logPanelTitle">下載紀錄</div>
+    <div class="section-title" id="logPanelTitle" data-i18n="p2_log_title">Download Log</div>
     <div style="background:#0d0d12;border:1px solid #1e1e2e;border-radius:10px;overflow:hidden">
       <div id="logBox"></div>
     </div>
@@ -540,16 +557,16 @@ input:focus, select:focus { border-color: #7c6dfa; }
 <div class="page" id="page-media">
 
   <div class="media-toolbar">
-    <input type="search" id="mediaSearch" placeholder="搜尋影片名稱…" oninput="loadMedia()">
+    <input type="search" id="mediaSearch" data-i18n-placeholder="search_ph" placeholder="Search videos..." oninput="loadMedia()">
     <select id="mediaFolder" onchange="loadMedia()">
-      <option value="">全部頻道</option>
+      <option value="" data-i18n="all_channels">All Channels</option>
     </select>
     <div class="sort-btns">
-      <button class="sort-btn" id="sb-name"  onclick="setSortBy('name')">名稱</button>
+      <button class="sort-btn" id="sb-name"  onclick="setSortBy('name')"  data-i18n="sort_name">Name</button>
       <div class="sort-sep"></div>
-      <button class="sort-btn active" id="sb-date" onclick="setSortBy('date')">日期</button>
+      <button class="sort-btn active" id="sb-date" onclick="setSortBy('date')" data-i18n="sort_date">Date</button>
       <div class="sort-sep"></div>
-      <button class="sort-btn" id="sb-size"  onclick="setSortBy('size')">大小</button>
+      <button class="sort-btn" id="sb-size"  onclick="setSortBy('size')"  data-i18n="sort_size">Size</button>
       <div class="sort-sep"></div>
       <button class="sort-btn" id="sb-asc"   onclick="toggleSortDir()">↑↓</button>
     </div>
@@ -559,11 +576,11 @@ input:focus, select:focus { border-color: #7c6dfa; }
         oninput="setTileSize(this.value)">
       <span id="tileSzLbl">260px</span>
     </div>
-    <button class="btn btn-ghost btn-sm" onclick="loadMedia()">重新整理</button>
+    <button class="btn btn-ghost btn-sm" onclick="loadMedia()" data-i18n="p3_refresh">Refresh</button>
   </div>
 
   <div id="mediaLoading" style="display:none;text-align:center;padding:60px 0;color:#666;font-size:.95rem">
-    <span class="spinner"></span>&ensp;載入中…
+    <span class="spinner"></span>&ensp;<span data-i18n="p3_loading">Loading...</span>
   </div>
   <div id="tvWall" class="tv-wall"></div>
 
@@ -577,16 +594,15 @@ input:focus, select:focus { border-color: #7c6dfa; }
 <!-- ══════════════════════ PAGE 4: Similar ══════════════════════ -->
 <div class="page" id="page-similar">
 
-  <p class="similar-hint">
-    系統會比較所有影片的標題相似度，將可能為「同一節目不同頻道拍攝」的影片群組化。
-    勾選想要刪除的項目（建議保留解析度較高者），再點擊刪除。
+  <p class="similar-hint" data-i18n="p4_hint">
+    The system compares video title similarities to group videos that may be "the same program from different channels". Check items to delete (recommended: keep higher resolution), then click delete.
   </p>
   <div class="similar-toolbar">
     <button class="btn btn-primary" onclick="loadSimilar()" id="simBtn">
-      <span>開始分析</span>
+      <span data-i18n="p4_analyze">Start Analysis</span>
     </button>
-    <button class="btn btn-danger" onclick="deleteChecked()" id="simDelBtn" style="display:none">
-      刪除已勾選
+    <button class="btn btn-danger" onclick="deleteChecked()" id="simDelBtn" style="display:none" data-i18n="p4_delete">
+      Delete Selected
     </button>
     <span id="simStatus" class="text-muted"></span>
   </div>
@@ -597,52 +613,58 @@ input:focus, select:focus { border-color: #7c6dfa; }
 
 <!-- ══════════════════════ PAGE 5: Settings ══════════════════════ -->
 <div class="page" id="page-settings">
-<div style="max-width:600px">
+<div class="settings-grid">
 
+  <!-- Download Settings -->
   <div class="card">
-    <div class="section-title">下載設定</div>
+    <div class="section-title" data-i18n="s_download_title">Download Settings</div>
 
-    <label>影片儲存路徑</label>
+    <label data-i18n="s_path_label">Video Storage Path</label>
     <div style="display:flex;gap:10px;align-items:center;margin-top:6px">
-      <input type="text" id="settingDownloadDir" placeholder="例：D:\Videos 或 /home/user/videos"
-        style="flex:1">
-      <button class="btn btn-ghost btn-sm" onclick="pasteDownloadDir()" title="貼上剪貼簿路徑">貼上</button>
+      <input type="text" id="settingDownloadDir" data-i18n-placeholder="s_path_ph"
+        placeholder="e.g. D:\Videos or /home/user/videos" style="flex:1">
+      <button class="btn btn-ghost btn-sm" onclick="pasteDownloadDir()"
+        data-i18n-title="s_paste_title" data-i18n="s_paste" title="Paste from clipboard">Paste</button>
     </div>
     <div class="text-muted" style="margin-top:6px">
-      目前路徑：<span id="currentDownloadDir" style="color:#aaa">讀取中…</span>
+      <span data-i18n="s_current_path">Current path:</span>
+      <span id="currentDownloadDir" style="color:#aaa">Loading...</span>
     </div>
 
     <div style="margin-top:18px;display:flex;gap:10px;align-items:center">
-      <button class="btn btn-primary" onclick="saveSettings()">儲存設定</button>
-      <span id="settingsSaveMsg" style="font-size:.82rem;color:#3ddc84;display:none">✓ 已儲存</span>
+      <button class="btn btn-primary" onclick="saveSettings()" data-i18n="s_save">Save Settings</button>
+      <span id="settingsSaveMsg" style="font-size:.82rem;color:#3ddc84;display:none" data-i18n="s_saved">✓ Saved</span>
       <span id="settingsSaveErr" style="font-size:.82rem;color:#f08080;display:none"></span>
     </div>
   </div>
 
+  <!-- Floating Player -->
   <div class="card">
-    <div class="section-title">懸浮播放器</div>
+    <div class="section-title" data-i18n="s_player_title">Floating Player</div>
 
-    <label style="margin-top:0">播放模式</label>
-    <div style="display:flex;gap:16px;margin-top:8px">
+    <label style="margin-top:0" data-i18n="s_play_mode">Play Mode</label>
+    <div style="display:flex;gap:16px;margin-top:8px;flex-wrap:wrap">
       <label style="display:flex;align-items:center;gap:8px;margin:0;color:#ccc;font-size:.88rem;cursor:pointer">
-        <input type="radio" name="fpMode" value="single" id="fpModeSingle"> 單開（開新視窗時關閉舊的）
+        <input type="radio" name="fpMode" value="single" id="fpModeSingle">
+        <span data-i18n="s_single_mode">Single (close existing when opening new)</span>
       </label>
       <label style="display:flex;align-items:center;gap:8px;margin:0;color:#ccc;font-size:.88rem;cursor:pointer">
-        <input type="radio" name="fpMode" value="multi"  id="fpModeMulti">  多開（同時開多個視窗）
+        <input type="radio" name="fpMode" value="multi" id="fpModeMulti">
+        <span data-i18n="s_multi_mode">Multi (open multiple simultaneously)</span>
       </label>
     </div>
 
     <div style="margin-top:16px;display:flex;align-items:center;gap:10px">
       <input type="checkbox" id="fpEnabled" style="width:auto;accent-color:#7c6dfa;cursor:pointer">
-      <label for="fpEnabled" style="margin:0;color:#ccc;font-size:.88rem;cursor:pointer">啟用懸浮播放器</label>
+      <label for="fpEnabled" style="margin:0;color:#ccc;font-size:.88rem;cursor:pointer" data-i18n="s_enable_fp">Enable Floating Player</label>
     </div>
 
     <div style="margin-top:12px;display:flex;align-items:center;gap:10px">
       <input type="checkbox" id="fpMuteDefault" style="width:auto;accent-color:#7c6dfa;cursor:pointer">
-      <label for="fpMuteDefault" style="margin:0;color:#ccc;font-size:.88rem;cursor:pointer">預設禁音</label>
+      <label for="fpMuteDefault" style="margin:0;color:#ccc;font-size:.88rem;cursor:pointer" data-i18n="s_mute_default">Default Mute</label>
     </div>
 
-    <label style="margin-top:16px">預設音量</label>
+    <label style="margin-top:16px" data-i18n="s_default_volume">Default Volume</label>
     <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
       <input type="range" id="fpVolumeDefault" min="0" max="100" value="20" step="1"
         style="width:160px;accent-color:#7c6dfa;cursor:pointer"
@@ -651,13 +673,14 @@ input:focus, select:focus { border-color: #7c6dfa; }
     </div>
 
     <div style="margin-top:18px;display:flex;gap:10px;align-items:center">
-      <button class="btn btn-primary" onclick="savePlayerSettings()">儲存</button>
-      <span id="fpSettingsSaveMsg" style="font-size:.82rem;color:#3ddc84;display:none">✓ 已儲存</span>
+      <button class="btn btn-primary" onclick="savePlayerSettings()" data-i18n="s_save_player">Save</button>
+      <span id="fpSettingsSaveMsg" style="font-size:.82rem;color:#3ddc84;display:none" data-i18n="s_fp_saved">✓ Saved</span>
     </div>
   </div>
 
+  <!-- Update Check Mode -->
   <div class="card">
-    <div class="section-title">更新檢查模式</div>
+    <div class="section-title" data-i18n="s_check_mode_title">Update Check Mode</div>
 
     <div style="display:flex;flex-direction:column;gap:14px;margin-top:8px">
       <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">
@@ -665,8 +688,8 @@ input:focus, select:focus { border-color: #7c6dfa; }
           style="width:auto;accent-color:#7c6dfa;margin-top:3px;cursor:pointer"
           onchange="document.getElementById('recentCountRow').style.display='none'">
         <div>
-          <div style="color:#ccc;font-size:.88rem;font-weight:600">完整模式（預設）</div>
-          <div style="color:#666;font-size:.78rem;margin-top:3px">從 YouTube 取得完整影片清單，比對已下載紀錄後下載新影片。清單較大時等待較久。</div>
+          <div style="color:#ccc;font-size:.88rem;font-weight:600" data-i18n="s_full_title">Full Mode (Default)</div>
+          <div style="color:#666;font-size:.78rem;margin-top:3px" data-i18n="s_full_desc">Fetch the complete video list from YouTube, compare with downloaded records, then download new videos. May take longer for large channels.</div>
         </div>
       </label>
       <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">
@@ -674,40 +697,51 @@ input:focus, select:focus { border-color: #7c6dfa; }
           style="width:auto;accent-color:#7c6dfa;margin-top:3px;cursor:pointer"
           onchange="document.getElementById('recentCountRow').style.display='flex'">
         <div>
-          <div style="color:#ccc;font-size:.88rem;font-weight:600">最近 N 部模式</div>
-          <div style="color:#666;font-size:.78rem;margin-top:3px">只從 YouTube 抓最新的 N 部影片來比對，大幅縮短等待時間，適合定期更新檢查。</div>
+          <div style="color:#ccc;font-size:.88rem;font-weight:600" data-i18n="s_recent_title">Recent-N Mode</div>
+          <div style="color:#666;font-size:.78rem;margin-top:3px" data-i18n="s_recent_desc">Only fetch the latest N videos from YouTube for comparison, greatly reducing wait time. Suitable for regular update checks.</div>
         </div>
       </label>
       <div id="recentCountRow" style="display:none;align-items:center;gap:10px;padding-left:24px">
-        <span style="font-size:.82rem;color:#888">最近</span>
+        <span style="font-size:.82rem;color:#888" data-i18n="s_recent_prefix">Latest</span>
         <input type="number" id="recentCountInput" min="5" max="500" value="50"
           style="width:70px;text-align:center">
-        <span style="font-size:.82rem;color:#888">部</span>
+        <span style="font-size:.82rem;color:#888" data-i18n="s_recent_suffix">videos</span>
       </div>
       <label style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">
         <input type="radio" name="checkMode" value="fast" id="checkModeFast"
           style="width:auto;accent-color:#7c6dfa;margin-top:3px;cursor:pointer"
           onchange="document.getElementById('recentCountRow').style.display='none'">
         <div>
-          <div style="color:#ccc;font-size:.88rem;font-weight:600">快速模式</div>
-          <div style="color:#666;font-size:.78rem;margin-top:3px">略過我們自己的清單讀取，直接讓 yt-dlp 下載頻道 URL，遇到新影片就立即下載，已下載的自動略過。不預先顯示影片清單。</div>
+          <div style="color:#ccc;font-size:.88rem;font-weight:600" data-i18n="s_fast_title">Fast Mode</div>
+          <div style="color:#666;font-size:.78rem;margin-top:3px" data-i18n="s_fast_desc">Skip list pre-fetching, let yt-dlp download the channel URL directly. New videos download immediately, already-downloaded ones are skipped. Does not pre-display video list.</div>
         </div>
       </label>
     </div>
 
     <div style="margin-top:18px;display:flex;gap:10px;align-items:center">
-      <button class="btn btn-primary" onclick="saveCheckMode()">儲存</button>
-      <span id="checkModeSaveMsg" style="font-size:.82rem;color:#3ddc84;display:none">✓ 已儲存</span>
+      <button class="btn btn-primary" onclick="saveCheckMode()" data-i18n="s_save_check">Save</button>
+      <span id="checkModeSaveMsg" style="font-size:.82rem;color:#3ddc84;display:none" data-i18n="s_check_saved">✓ Saved</span>
     </div>
   </div>
 
+  <!-- Language -->
   <div class="card">
-    <div class="section-title">使用說明</div>
+    <div class="section-title" data-i18n="s_lang_title">Language</div>
+    <div class="lang-btns">
+      <button class="btn btn-ghost btn-sm" onclick="setLang('en')" id="langBtn-en">English</button>
+      <button class="btn btn-ghost btn-sm" onclick="setLang('zh-TW')" id="langBtn-zh-TW">繁體中文</button>
+      <button class="btn btn-ghost btn-sm" onclick="setLang('zh-CN')" id="langBtn-zh-CN">简体中文</button>
+    </div>
+  </div>
+
+  <!-- Usage Notes (full width) -->
+  <div class="card sg-full">
+    <div class="section-title" data-i18n="s_usage_title">Usage Notes</div>
     <div style="font-size:.83rem;color:#666;line-height:1.8">
-      <p>• 路徑可以是絕對路徑（推薦），例如 <code style="color:#aaa">D:\YTVideos</code></p>
-      <p>• 路徑不存在時會自動建立</p>
-      <p>• 修改路徑後，新的下載任務會存到新路徑；現有影片不會搬移</p>
-      <p>• 影片管理頁也會同步切換到新路徑</p>
+      <p data-i18n-html="s_usage_1">• Path can be absolute (recommended), e.g. <code style="color:#aaa">D:\YTVideos</code></p>
+      <p data-i18n-html="s_usage_2">• Path will be created automatically if it doesn't exist</p>
+      <p data-i18n-html="s_usage_3">• After changing path, new downloads save to the new path; existing videos are not moved</p>
+      <p data-i18n-html="s_usage_4">• Media Library also switches to the new path</p>
     </div>
   </div>
 
@@ -717,16 +751,15 @@ input:focus, select:focus { border-color: #7c6dfa; }
 <!-- ── Cookies Manager Modal ── -->
 <div class="overlay" id="ckOverlay" onclick="maybeClose('ckOverlay',event)">
   <div class="modal" onclick="event.stopPropagation()">
-    <h3>Cookies 管理</h3>
-    <p class="modal-hint">
-      使用瀏覽器擴充套件「Get cookies.txt LOCALLY」在 YouTube 頁面匯出 cookies，
-      上傳後可下載需要年齡驗證或會員專屬的影片。
+    <h3 data-i18n="ck_modal_title">Cookies Manager</h3>
+    <p class="modal-hint" data-i18n="ck_modal_hint">
+      Use the "Get cookies.txt LOCALLY" browser extension to export cookies on a YouTube page. Upload here to download age-restricted or members-only videos.
     </p>
     <div id="ckList" style="margin-top:14px"></div>
     <div class="modal-actions">
-      <label class="upload-lbl" for="ckFileInput2">上傳新檔案</label>
+      <label class="upload-lbl" for="ckFileInput2" data-i18n="ck_upload_new">Upload New File</label>
       <input type="file" id="ckFileInput2" accept=".txt" style="display:none" onchange="uploadCookies(this)">
-      <button class="btn btn-ghost" onclick="closeOverlay('ckOverlay')">關閉</button>
+      <button class="btn btn-ghost" onclick="closeOverlay('ckOverlay')" data-i18n="ck_close">Close</button>
     </div>
   </div>
 </div>
@@ -735,8 +768,8 @@ input:focus, select:focus { border-color: #7c6dfa; }
 <div id="fsoOverlay">
   <div id="fso-bar">
     <span id="fso-title"></span>
-    <button class="fso-btn" title="全螢幕" onclick="fsoFullscreen()">⛶</button>
-    <button class="fso-btn fso-close" title="關閉 (ESC)" onclick="fsoClose()">✕</button>
+    <button class="fso-btn" data-i18n-title="fso_fullscreen_title" title="Fullscreen" onclick="fsoFullscreen()">⛶</button>
+    <button class="fso-btn fso-close" data-i18n-title="fso_close_title" title="Close (ESC)" onclick="fsoClose()">✕</button>
   </div>
   <div id="fso-body">
     <video id="fso-video" controls autoplay playsinline></video>
@@ -746,31 +779,31 @@ input:focus, select:focus { border-color: #7c6dfa; }
 <!-- ── Cookies Tutorial Modal ── -->
 <div class="overlay" id="ckTutorialOverlay" onclick="maybeClose('ckTutorialOverlay',event)">
   <div class="modal" onclick="event.stopPropagation()">
-    <h3>如何取得正確的 Cookies</h3>
+    <h3 data-i18n="tut_title">How to Get Correct Cookies</h3>
     <div class="tutorial-step">
-      <p><strong>步驟一：安裝擴充套件</strong></p>
-      <p>在 Chrome 線上應用程式商店搜尋並安裝「<strong>Get cookies.txt LOCALLY</strong>」</p>
+      <p><strong data-i18n="tut_s1_title">Step 1: Install Extension</strong></p>
+      <p data-i18n="tut_s1_desc">Search and install "Get cookies.txt LOCALLY" in the Chrome Web Store</p>
     </div>
     <div class="tutorial-step">
-      <p><strong>步驟二：登入 YouTube 並觀看年齡限制影片</strong></p>
-      <p>前往 <code>youtube.com</code> 並登入帳號，確認右上角顯示帳號頭像</p>
-      <p style="margin-top:6px">接著開啟任一<strong>需要年齡認證的影片連結</strong>，確認影片可以正常播放（而非顯示「登入以確認年齡」畫面）</p>
-      <p class="tutorial-warn">⚠ 必須實際播放過年齡限制影片，Google 才會將完整的認證 token 寫入 cookies</p>
+      <p><strong data-i18n="tut_s2_title">Step 2: Log in to YouTube and Watch an Age-restricted Video</strong></p>
+      <p data-i18n-html="tut_s2_desc1">Go to <code>youtube.com</code> and log in — confirm your account avatar appears in the top-right</p>
+      <p style="margin-top:6px" data-i18n-html="tut_s2_desc2">Then open any <strong>age-restricted video</strong> and confirm it plays normally (not showing "Sign in to confirm your age")</p>
+      <p class="tutorial-warn" data-i18n="tut_s2_warn">⚠ You must actually play an age-restricted video for Google to write the full auth token into cookies</p>
     </div>
     <div class="tutorial-step">
-      <p><strong>步驟三：匯出 Cookies</strong></p>
-      <p>在該 YouTube 頁面點擊擴充套件圖示，選擇 <strong>「Export All Cookies」</strong>（不是「Export」）</p>
-      <p class="tutorial-warn">⚠ 請在播放年齡限制影片的頁面上匯出，不要切換到其他網站後再匯出</p>
+      <p><strong data-i18n="tut_s3_title">Step 3: Export Cookies</strong></p>
+      <p data-i18n-html="tut_s3_desc">On that YouTube page, click the extension icon and select <strong>"Export All Cookies"</strong> (not "Export")</p>
+      <p class="tutorial-warn" data-i18n="tut_s3_warn">⚠ Export on the page where you played the age-restricted video, don't switch to other sites first</p>
     </div>
     <div class="tutorial-step">
-      <p><strong>步驟四：上傳</strong></p>
-      <p>將匯出的 <code>.txt</code> 檔上傳到此工具，上傳時會自動驗證是否包含必要欄位</p>
+      <p><strong data-i18n="tut_s4_title">Step 4: Upload</strong></p>
+      <p data-i18n-html="tut_s4_desc">Upload the exported <code>.txt</code> file to this tool. It will automatically validate the required fields.</p>
     </div>
-    <div class="tutorial-check">
-      ✅ 正確的 cookies 應包含：<code>__Secure-1PSID</code>、<code>__Secure-3PSID</code>、<code>SAPISID</code>、<code>LOGIN_INFO</code>
+    <div class="tutorial-check" data-i18n-html="tut_check">
+      ✅ Correct cookies should contain: <code>__Secure-1PSID</code>, <code>__Secure-3PSID</code>, <code>SAPISID</code>, <code>LOGIN_INFO</code>
     </div>
     <div class="modal-actions">
-      <button class="btn btn-ghost" onclick="closeOverlay('ckTutorialOverlay')">關閉</button>
+      <button class="btn btn-ghost" onclick="closeOverlay('ckTutorialOverlay')" data-i18n="ck_close">Close</button>
     </div>
   </div>
 </div>
@@ -778,15 +811,15 @@ input:focus, select:focus { border-color: #7c6dfa; }
 <!-- ── Move Modal ── -->
 <div class="overlay" id="moveOverlay" onclick="maybeClose('moveOverlay',event)">
   <div class="modal" onclick="event.stopPropagation()">
-    <h3>搬移到其他頻道資料夾</h3>
+    <h3 data-i18n="move_title">Move to Another Channel Folder</h3>
     <input type="hidden" id="moveRelPath">
-    <label>選擇現有頻道</label>
+    <label data-i18n="move_select_folder">Select Existing Channel</label>
     <select id="moveFolderSel"></select>
-    <label style="margin-top:12px">或輸入新資料夾名稱</label>
-    <input type="text" id="moveFolderNew" placeholder="新資料夾名稱">
+    <label style="margin-top:12px" data-i18n="move_new_folder_label">Or Enter New Folder Name</label>
+    <input type="text" id="moveFolderNew" data-i18n-placeholder="move_new_ph" placeholder="New folder name">
     <div class="modal-actions">
-      <button class="btn btn-primary" onclick="doMove()">搬移</button>
-      <button class="btn btn-ghost" onclick="closeOverlay('moveOverlay')">取消</button>
+      <button class="btn btn-primary" onclick="doMove()" data-i18n="move_btn">Move</button>
+      <button class="btn btn-ghost" onclick="closeOverlay('moveOverlay')" data-i18n="btn_cancel">Cancel</button>
     </div>
   </div>
 </div>
@@ -794,13 +827,13 @@ input:focus, select:focus { border-color: #7c6dfa; }
 <!-- ── Rename Modal ── -->
 <div class="overlay" id="renameOverlay" onclick="maybeClose('renameOverlay',event)">
   <div class="modal" onclick="event.stopPropagation()">
-    <h3>重新命名影片資料夾</h3>
+    <h3 data-i18n="rename_title">Rename Video Folder</h3>
     <input type="hidden" id="renameRelPath">
-    <label>新名稱</label>
+    <label data-i18n="rename_new_name">New Name</label>
     <input type="text" id="renameNewName">
     <div class="modal-actions">
-      <button class="btn btn-primary" onclick="doRename()">確認</button>
-      <button class="btn btn-ghost" onclick="closeOverlay('renameOverlay')">取消</button>
+      <button class="btn btn-primary" onclick="doRename()" data-i18n="btn_confirm">Confirm</button>
+      <button class="btn btn-ghost" onclick="closeOverlay('renameOverlay')" data-i18n="btn_cancel">Cancel</button>
     </div>
   </div>
 </div>
@@ -850,12 +883,13 @@ function toggleFilter() {
   const b   = document.getElementById("filterBody");
   const btn = document.querySelector(".filter-toggle");
   const o   = b.classList.toggle("open");
-  btn.textContent = (o ? "▼" : "▶") + " 下載條件篩選";
+  const span = btn.querySelector('[data-i18n="p1_filter_toggle"]');
+  if (span) btn.firstChild.textContent = o ? "▼ " : "▶ ";
 }
 
 async function addJob() {
   const url = document.getElementById("url").value.trim();
-  if (!url) { alert("請輸入 URL"); return; }
+  if (!url) { alert(t("alert_url_empty")); return; }
 
   const g = id => document.getElementById(id).value.trim();
   const filters = {};
@@ -871,7 +905,7 @@ async function addJob() {
 
   const btn = document.getElementById("addBtn");
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> 讀取頻道資訊…';
+  btn.innerHTML = `<span class="spinner"></span> ${t("p1_adding")}`;
 
   try {
     // Check for duplicate URL — if already in queue, trigger update check instead
@@ -908,7 +942,7 @@ async function addJob() {
     nav("queue");
   } finally {
     btn.disabled = false;
-    btn.innerHTML = "<span>加入下載佇列</span>";
+    btn.innerHTML = `<span data-i18n="p1_add_btn">${t("p1_add_btn")}</span>`;
   }
 }
 
@@ -952,7 +986,7 @@ async function loadQueue() {
 function renderQueue(list) {
   const el = document.getElementById("queueList");
   if (!list.length) {
-    el.innerHTML = '<div class="empty">尚無任務。前往「新增頻道」開始下載。</div>';
+    el.innerHTML = `<div class="empty">${t("p2_empty")}</div>`;
     return;
   }
   el.innerHTML = list.map(j => renderChannelCard(j)).join("");
@@ -966,29 +1000,29 @@ function renderChannelCard(j) {
   const isRunning = j.status === "running" || j.status === "prefetching";
 
   const statusBadge = {
-    pending: '<span class="badge bd-pending">等待</span>',
-    prefetching: '<span class="badge bd-prefetch">讀取中</span>',
-    running: '<span class="badge bd-running">下載中</span>',
-    done:    '<span class="badge bd-done">完成</span>',
-    error:   '<span class="badge bd-error">錯誤</span>',
+    pending:    `<span class="badge bd-pending">${t("badge_pending")}</span>`,
+    prefetching:`<span class="badge bd-prefetch">${t("badge_prefetch")}</span>`,
+    running:    `<span class="badge bd-running">${t("badge_running")}</span>`,
+    done:       `<span class="badge bd-done">${t("badge_done")}</span>`,
+    error:      `<span class="badge bd-error">${t("badge_error")}</span>`,
   }[j.status] || '';
 
   const letter = (j.channel_name || j.name || "?")[0].toUpperCase();
-  const countStr = total === "?" ? `${dl} 部` : `${dl} / ${total}`;
+  const countStr = total === "?" ? t("p2_count_only", dl) : t("p2_count_both", dl, total);
   const createdDate = j.created_at ? j.created_at.slice(0,10) : "";
   const cookieBadge = j.cookies_file ? `<span class="ch-cookie">🍪 Cookies</span>` : "";
 
   // Helper: render one video item row
   function renderVidItem(v, i) {
     const vbadge = {
-      pending:    '<span class="badge bd-vpending">等待</span>',
-      downloading:'<span class="badge bd-vdl">下載中</span>',
-      done:       '<span class="badge bd-vdone">完成</span>',
-      error:      '<span class="badge bd-verror">錯誤</span>',
-      skipped:    '<span class="badge bd-vskip">略過</span>',
-      exists:     '<span class="badge bd-vexists">已存在</span>',
-      processing: '<span class="badge bd-vdl">處理中</span>',
-      merging:    '<span class="badge bd-vdl">合併中</span>',
+      pending:    `<span class="badge bd-vpending">${t("vid_pending")}</span>`,
+      downloading:`<span class="badge bd-vdl">${t("vid_downloading")}</span>`,
+      done:       `<span class="badge bd-vdone">${t("vid_done")}</span>`,
+      error:      `<span class="badge bd-verror">${t("vid_error")}</span>`,
+      skipped:    `<span class="badge bd-vskip">${t("vid_skipped")}</span>`,
+      exists:     `<span class="badge bd-vexists">${t("vid_exists")}</span>`,
+      processing: `<span class="badge bd-vdl">${t("vid_processing")}</span>`,
+      merging:    `<span class="badge bd-vdl">${t("vid_merging")}</span>`,
     }[v.status] || '';
     const showBar = v.status === "downloading" && v.percent > 0;
     const errLine = (v.status === "error" || v.status === "skipped") && v.error_msg
@@ -1018,13 +1052,13 @@ function renderChannelCard(j) {
     if (secOpen) {
       bodyHtml = items.length
         ? items.map((v, i) => renderVidItem(v, i)).join("")
-        : '<div class="vid-list-placeholder">正在讀取…</div>';
+        : `<div class="vid-list-placeholder">${t("section_loading")}</div>`;
     }
     return `
       <div class="vid-section-header ${secOpen ? 'open' : ''}"
            onclick="toggleSection('${jobId}','${sectionKey}',event)">
         <span class="vid-section-label">${label}</span>
-        <span class="vid-section-count">${items.length} 部</span>
+        <span class="vid-section-count">${t("p2_count_only", items.length)}</span>
         <span class="vid-section-chevron">▶</span>
       </div>
       ${secOpen ? `<div>${bodyHtml}</div>` : ''}`;
@@ -1036,10 +1070,10 @@ function renderChannelCard(j) {
 
   let innerHtml = "";
   if (allVids.length || isRunning) {
-    innerHtml = renderSection(j.id, "videos", "影片",  vidItems, isRunning)
+    innerHtml = renderSection(j.id, "videos", t("section_videos"), vidItems, isRunning)
               + renderSection(j.id, "shorts", "Shorts", srtItems, isRunning);
   } else {
-    innerHtml = '<div class="vid-list-placeholder">無影片資訊</div>';
+    innerHtml = `<div class="vid-list-placeholder">${t("vid_none")}</div>`;
   }
 
   return `
@@ -1057,8 +1091,8 @@ function renderChannelCard(j) {
         </div>
         ${statusBadge}
         ${isRunning
-          ? `<button class="btn btn-danger btn-sm" style="flex-shrink:0" onclick="stopJob('${j.id}',event)">同步檢查中…</button>`
-          : `<button class="btn btn-primary btn-sm" style="flex-shrink:0" onclick="restartJob('${j.id}',event)">更新檢查</button>`}
+          ? `<button class="btn btn-danger btn-sm" style="flex-shrink:0" onclick="stopJob('${j.id}',event)">${t("p2_checking")}</button>`
+          : `<button class="btn btn-primary btn-sm" style="flex-shrink:0" onclick="restartJob('${j.id}',event)">${t("p2_update")}</button>`}
         <span class="ch-chevron">▶</span>
       </div>
     </div>
@@ -1068,20 +1102,20 @@ function renderChannelCard(j) {
 
     <div class="ch-actions">
       <div style="display:flex;align-items:center;gap:6px;flex:1;min-width:0">
-        <span style="font-size:.75rem;color:#666;white-space:nowrap">Cookies：</span>
+        <span style="font-size:.75rem;color:#666;white-space:nowrap">${t("p2_cookies_label")}</span>
         <select style="font-size:.78rem;flex:1;min-width:0;max-width:200px"
           onchange="updateJobCookies('${j.id}',this.value,event)"
           onclick="event.stopPropagation()">
-          <option value="">不使用</option>
+          <option value="">${t("p2_no_cookies")}</option>
           ${(window._cookieFiles||[]).map(f =>
             `<option value="${esc(f)}" ${f === (j.cookies_file||'') ? 'selected' : ''}>${esc(f)}</option>`
           ).join('')}
         </select>
       </div>
       <button class="btn btn-ghost btn-sm" onclick="selectLog('${j.id}',event)">
-        ${selectedJobId === j.id && logVisible ? '隱藏紀錄' : '查看紀錄'}
+        ${selectedJobId === j.id && logVisible ? t("p2_hide_log") : t("p2_view_log")}
       </button>
-      <button class="btn btn-danger btn-sm" onclick="deleteJob('${j.id}',event)">刪除任務</button>
+      <button class="btn btn-danger btn-sm" onclick="deleteJob('${j.id}',event)">${t("p2_delete")}</button>
     </div>` : ''}
   </div>`;
 }
@@ -1114,7 +1148,7 @@ function selectLog(jobId, e) {
     logVisible = true;
     document.getElementById("logPanel").style.display = "block";
     document.getElementById("logPanelTitle").textContent =
-      "下載紀錄 – " + (document.querySelector(`#chcard-${jobId} .ch-name`)?.textContent || jobId);
+      t("p2_log_title") + " – " + (document.querySelector(`#chcard-${jobId} .ch-name`)?.textContent || jobId);
   }
   loadQueue();
 }
@@ -1144,7 +1178,7 @@ async function stopJob(jobId, e) {
 
 async function deleteJob(jobId, e) {
   e.stopPropagation();
-  if (!confirm("確定刪除此任務？（已下載的影片不受影響）")) return;
+  if (!confirm(t("confirm_delete_job"))) return;
   await fetch(`/api/jobs/${jobId}`, {method:"DELETE"});
   expandedJobIds.delete(jobId);
   if (selectedJobId === jobId) {
@@ -1203,7 +1237,7 @@ async function loadFolders() {
   const fls = await res.json();
   const sel = document.getElementById("mediaFolder");
   const cur = sel.value;
-  sel.innerHTML = '<option value="">全部頻道</option>';
+  sel.innerHTML = `<option value="">${t("all_channels")}</option>`;
   fls.forEach(f => {
     const o = document.createElement("option");
     o.value = f; o.textContent = f;
@@ -1218,7 +1252,7 @@ function _applyMediaData(data) {
   const wall = document.getElementById("tvWall");
   wall.innerHTML = "";
   if (!data.length) {
-    wall.innerHTML = '<div class="empty" style="grid-column:1/-1">沒有找到影片</div>';
+    wall.innerHTML = `<div class="empty" style="grid-column:1/-1">${t("p3_empty")}</div>`;
     document.getElementById("mediaMore").style.display = "none";
     return;
   }
@@ -1282,7 +1316,7 @@ function renderNextBatch() {
   const shown = mediaCursor, total = allMediaData.length;
   const more  = document.getElementById("mediaMore");
   const cnt   = document.getElementById("mediaCount");
-  cnt.textContent = `顯示 ${shown} / ${total} 個影片`;
+  cnt.textContent = t("p3_count", shown, total);
   more.style.display = total > 0 ? "block" : "none";
 }
 
@@ -1546,7 +1580,7 @@ function fpResizeStart(e, win) {
 async function loadSimilar() {
   const btn = document.getElementById("simBtn");
   btn.disabled = true;
-  btn.innerHTML = '<span class="spinner"></span> 掃描中，請稍候…';
+  btn.innerHTML = `<span class="spinner"></span> ${t("p4_analyzing")}`;
   document.getElementById("simStatus").textContent = "";
   document.getElementById("simGroups").innerHTML = "";
   document.getElementById("simDelBtn").style.display = "none";
@@ -1557,21 +1591,19 @@ async function loadSimilar() {
     renderSimilar(data.groups ?? data, data.total_scanned ?? "?");
   } finally {
     btn.disabled = false;
-    btn.innerHTML = "<span>開始分析</span>";
+    btn.innerHTML = `<span data-i18n="p4_analyze">${t("p4_analyze")}</span>`;
   }
 }
 
 function renderSimilar(groups, totalScanned) {
   const el = document.getElementById("simGroups");
   if (!groups.length) {
-    el.innerHTML = '<div class="empty">未發現相似的影片群組</div>';
-    document.getElementById("simStatus").textContent =
-      `分析完成，共掃描 ${totalScanned} 個影片，無重複`;
+    el.innerHTML = `<div class="empty">${t("p4_no_similar")}</div>`;
+    document.getElementById("simStatus").textContent = t("p4_done_none", totalScanned);
     return;
   }
   const totalVids = groups.reduce((s, g) => s + g.length, 0);
-  document.getElementById("simStatus").textContent =
-    `共掃描 ${totalScanned} 個影片，找到 ${groups.length} 個相似群組（${totalVids} 部）`;
+  document.getElementById("simStatus").textContent = t("p4_done", totalScanned, groups.length, totalVids);
   document.getElementById("simDelBtn").style.display = "inline-flex";
 
   el.innerHTML = groups.map((group, gi) => {
@@ -1597,10 +1629,10 @@ function renderSimilar(groups, totalScanned) {
           <div class="sim-title" title="${esc(f.title)}">${esc(f.title)}</div>
           <div class="sim-channel">📁 ${esc(f.channel)}</div>
           <div class="sim-specs">
-            ${f.resolution ? `<div class="sim-spec">解析度 <span class="val">${esc(f.resolution)}</span></div>` : ''}
-            <div class="sim-spec">大小 <span class="val">${esc(f.size_fmt)}</span></div>
-            ${f.duration_fmt ? `<div class="sim-spec">時長 <span class="val">${esc(f.duration_fmt)}</span></div>` : ''}
-            ${isBest ? '<div class="sim-spec" style="color:#3ddc84">★ 建議保留</div>' : ''}
+            ${f.resolution ? `<div class="sim-spec">${t("p4_resolution")} <span class="val">${esc(f.resolution)}</span></div>` : ''}
+            <div class="sim-spec">${t("p4_size")} <span class="val">${esc(f.size_fmt)}</span></div>
+            ${f.duration_fmt ? `<div class="sim-spec">${t("p4_duration")} <span class="val">${esc(f.duration_fmt)}</span></div>` : ''}
+            ${isBest ? `<div class="sim-spec" style="color:#3ddc84">${t("p4_recommended")}</div>` : ''}
           </div>
         </div>
       </div>`;
@@ -1609,7 +1641,7 @@ function renderSimilar(groups, totalScanned) {
     return `
     <div class="sim-group">
       <div class="sim-group-header">
-        <span class="sim-group-label">相似群組 ${gi+1}（共 ${group.length} 部）</span>
+        <span class="sim-group-label">${t("p4_group_label", gi+1, group.length)}</span>
       </div>
       <div class="sim-items">${items}</div>
     </div>`;
@@ -1618,8 +1650,8 @@ function renderSimilar(groups, totalScanned) {
 
 async function deleteChecked() {
   const cbs = document.querySelectorAll(".sim-cb:checked");
-  if (!cbs.length) { alert("尚未勾選任何影片"); return; }
-  if (!confirm(`確定刪除 ${cbs.length} 部已勾選的影片？`)) return;
+  if (!cbs.length) { alert(t("confirm_no_checked")); return; }
+  if (!confirm(t("confirm_delete_n", cbs.length))) return;
 
   for (const cb of cbs) {
     await fetch("/api/media/delete", {
@@ -1640,7 +1672,7 @@ async function loadCookieOpts() {
   window._cookieFiles = files;   // cache for use in channel cards
   const sel   = document.getElementById("cookiesSelect");
   const cur   = sel.value;
-  sel.innerHTML = '<option value="">不使用 Cookies</option>';
+  sel.innerHTML = `<option value="">${t("p1_no_cookies")}</option>`;
   files.forEach(f => {
     const o = document.createElement("option");
     o.value = f; o.textContent = f;
@@ -1674,8 +1706,8 @@ async function uploadCookies(input) {
   const missing  = required.filter(k => !text.includes(k));
   if (missing.length > 0) {
     const msg = missing.length === required.length
-      ? "此 cookies 檔案不含任何 YouTube 登入 token，上傳後將無法下載年齡限制影片。\n\n請確認：\n• 在 youtube.com 頁面（已登入）下匯出\n• 使用「Export All Cookies」而非「Export」\n\n仍要上傳嗎？"
-      : `此 cookies 檔案缺少以下 YouTube 認證欄位：\n${missing.join("、")}\n\n可能影響年齡限制影片的下載。\n\n仍要上傳嗎？`;
+      ? t("cookies_warn_all")
+      : t("cookies_warn_some", missing.join(", "));
     if (!confirm(msg)) { input.value = ""; return; }
   }
 
@@ -1696,7 +1728,7 @@ function openCkTutorial() {
 }
 
 async function deleteCkFile(name) {
-  if (!confirm(`刪除 ${name}？`)) return;
+  if (!confirm(t("confirm_ck_delete", name))) return;
   await fetch(`/api/cookies/${encodeURIComponent(name)}`, {method:"DELETE"});
   await loadCookieOpts();
   renderCkList();
@@ -1712,13 +1744,13 @@ async function renderCkList() {
   const files = await res.json();
   const el    = document.getElementById("ckList");
   if (!files.length) {
-    el.innerHTML = '<div style="color:#444;font-size:.82rem">尚未上傳 cookies 檔案</div>';
+    el.innerHTML = `<div style="color:#444;font-size:.82rem">${t("ck_no_files")}</div>`;
     return;
   }
   el.innerHTML = files.map(f => `
     <div class="ck-file-row">
       <span>${esc(f)}</span>
-      <button class="btn btn-danger btn-sm" onclick="deleteCkFile('${esc(f)}')">刪除</button>
+      <button class="btn btn-danger btn-sm" onclick="deleteCkFile('${esc(f)}')">${t("ck_delete")}</button>
     </div>`).join("");
 }
 
@@ -1730,7 +1762,7 @@ async function loadSettings() {
   const res  = await fetch("/api/settings");
   const data = await res.json();
   document.getElementById("settingDownloadDir").value = data.download_dir || "";
-  document.getElementById("currentDownloadDir").textContent = data.download_dir || "（未設定）";
+  document.getElementById("currentDownloadDir").textContent = data.download_dir || t("s_not_set");
   const mode = data.check_mode || "full";
   const radio = document.querySelector(`input[name=checkMode][value="${mode}"]`);
   if (radio) radio.checked = true;
@@ -1760,7 +1792,7 @@ async function saveSettings() {
   msg.style.display = "none";
   err.style.display = "none";
 
-  if (!dir) { err.textContent = "路徑不能為空"; err.style.display="inline"; return; }
+  if (!dir) { err.textContent = t("s_path_empty"); err.style.display="inline"; return; }
 
   const res  = await fetch("/api/settings", {
     method: "POST",
@@ -1784,7 +1816,7 @@ async function pasteDownloadDir() {
     const text = await navigator.clipboard.readText();
     document.getElementById("settingDownloadDir").value = text.trim();
   } catch {
-    alert("無法讀取剪貼簿，請手動貼上");
+    alert(t("s_clipboard_error"));
   }
 }
 
@@ -1815,11 +1847,86 @@ function savePlayerSettings() {
 }
 
 // ══════════════════════════════════════════════════════════
+// i18n
+// ══════════════════════════════════════════════════════════
+
+let _lang = {};
+let _currentLang = 'en';
+
+function t(key, ...args) {
+  let s = _lang[key] ?? key;
+  args.forEach((v, i) => { s = s.replaceAll(`{${i}}`, v); });
+  return s;
+}
+
+async function loadLang(code) {
+  try {
+    const res = await fetch(`/static/lang/${code}.json`);
+    if (!res.ok) throw new Error("not found");
+    _lang = await res.json();
+  } catch {
+    _lang = {};
+  }
+  _currentLang = code;
+  localStorage.setItem('lang', code);
+  document.documentElement.lang = code;
+  applyLang();
+}
+
+function applyLang() {
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    el.textContent = t(el.dataset.i18n);
+  });
+  document.querySelectorAll('[data-i18n-html]').forEach(el => {
+    el.innerHTML = t(el.dataset.i18nHtml);
+  });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    el.placeholder = t(el.dataset.i18nPlaceholder);
+  });
+  document.querySelectorAll('[data-i18n-title]').forEach(el => {
+    el.title = t(el.dataset.i18nTitle);
+  });
+
+  // Update language button active state
+  ['en', 'zh-TW', 'zh-CN'].forEach(c => {
+    const btn = document.getElementById(`langBtn-${c}`);
+    if (!btn) return;
+    btn.classList.toggle('lang-btn-active', c === _currentLang);
+  });
+
+  // Update filter toggle chevron (text node + span approach)
+  const filterBody = document.getElementById('filterBody');
+  const filterBtn  = document.querySelector('.filter-toggle');
+  if (filterBtn && filterBody) {
+    const isOpen = filterBody.classList.contains('open');
+    filterBtn.childNodes[0].textContent = isOpen ? '▼ ' : '▶ ';
+  }
+
+  // Update first options that are dynamically populated
+  const cookiesSel = document.getElementById('cookiesSelect');
+  if (cookiesSel?.options[0]?.value === '') cookiesSel.options[0].textContent = t('p1_no_cookies');
+  const folderSel = document.getElementById('mediaFolder');
+  if (folderSel?.options[0]?.value === '') folderSel.options[0].textContent = t('all_channels');
+
+  // Re-render queue if active (badges need translation)
+  const activePage = PAGES.find(p => document.getElementById(`page-${p}`)?.classList.contains('active'));
+  if (activePage === 'queue') loadQueue();
+}
+
+function setLang(code) {
+  loadLang(code);
+}
+
+// ══════════════════════════════════════════════════════════
 // Init
 // ══════════════════════════════════════════════════════════
 
-loadCookieOpts();
-loadPlayerSettings();
+(async () => {
+  const saved = localStorage.getItem('lang') || 'en';
+  await loadLang(saved);
+  loadCookieOpts();
+  loadPlayerSettings();
+})();
 </script>
 </body>
 </html>
