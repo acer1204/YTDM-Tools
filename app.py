@@ -116,6 +116,9 @@ def _recover_interrupted_jobs(jobs_dict: dict):
     """On startup, any job still in running/prefetching was killed mid-download.
     Reset them to error so the user can re-trigger via 更新檢查."""
     for job in jobs_dict.values():
+        # Queued jobs: _job_queue is not persisted, reset to pending so user can re-trigger
+        if job.get("status") == "queued":
+            job["status"] = "pending"
         if job.get("status") in ("running", "prefetching"):
             job["status"]      = "error"
             job["finished_at"] = datetime.now().isoformat()
@@ -305,7 +308,11 @@ def _enqueue_or_start(job_id: str):
                     save_jobs()
             start_now = False
     if start_now:
-        threading.Thread(target=run_download, args=(job_id,), daemon=True).start()
+        try:
+            threading.Thread(target=run_download, args=(job_id,), daemon=True).start()
+        except Exception:
+            with _queue_lock:
+                _running_count = max(0, _running_count - 1)
 
 
 def _try_start_next():
@@ -319,12 +326,17 @@ def _try_start_next():
             return
         next_id = _job_queue.pop(0)
         _running_count += 1
-    threading.Thread(target=run_download, args=(next_id,), daemon=True).start()
+    try:
+        threading.Thread(target=run_download, args=(next_id,), daemon=True).start()
+    except Exception:
+        with _queue_lock:
+            _running_count = max(0, _running_count - 1)
 
 
 def _scheduler_loop():
     """Background thread: fires download queue on configured weekly schedule."""
     global _last_schedule_key
+    time.sleep(60)  # skip first minute after restart to avoid spurious trigger
     while True:
         time.sleep(30)
         try:
@@ -893,7 +905,7 @@ def stop_job(job_id):
     with jobs_lock:
         job = jobs.get(job_id)
         if job:
-            if was_queued:
+            if was_queued or job["status"] == "queued":
                 job["status"] = "pending"
             elif job["status"] in ("running", "prefetching"):
                 job["status"]      = "error"
@@ -943,9 +955,13 @@ def _make_entry(base: Path, d: Path, files: list, title_override: str | None = N
     thumb = find_thumbnail(d)
     info  = read_info_json(d)
 
-    total_size = sum(f.stat().st_size for f in files if f.is_file())
+    total_size = sum(f.stat().st_size for f in files if f.is_file() and f.exists())
     h = info.get("height")
     w = info.get("width")
+    try:
+        modified = datetime.fromtimestamp(best.stat().st_mtime).isoformat()
+    except FileNotFoundError:
+        return None
 
     return {
         "title":        title,
@@ -955,7 +971,7 @@ def _make_entry(base: Path, d: Path, files: list, title_override: str | None = N
         "size":         total_size,
         "size_fmt":     fmt_size(total_size),
         "unmerged":     bool(video_files and audio_files and not merged),
-        "modified":     datetime.fromtimestamp(best.stat().st_mtime).isoformat(),
+        "modified":     modified,
         "upload_date":  info.get("upload_date", ""),
         "duration":     info.get("duration"),
         "duration_fmt": fmt_duration(info.get("duration")),

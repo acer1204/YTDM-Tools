@@ -154,10 +154,15 @@ input:focus, select:focus { border-color: #7c6dfa; }
 .ch-right { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
 .ch-count { font-size: .85rem; font-weight: 700; color: #bbb; }
 .ch-progress {
-  width: 90px; height: 4px; background: #252535;
+  width: 90px; height: 4px; background: #252535; display: flex; overflow: hidden;
   border-radius: 4px; overflow: hidden; flex-shrink: 0;
 }
-.ch-progress-fill { height: 100%; background: #7c6dfa; transition: width .3s; border-radius: 4px; }
+.ch-seg { height: 100%; transition: width .4s; }
+.ch-seg-done     { background: #3ddc84; }
+.ch-seg-exists   { background: #50b8e8; }
+.ch-seg-skipped  { background: #666; }
+.ch-seg-error    { background: #f08080; }
+.ch-seg-dl       { background: #7c6dfa; }
 .ch-chevron { font-size: .8rem; color: #444; transition: transform .2s; }
 .ch-card.open .ch-chevron { transform: rotate(90deg); }
 
@@ -1068,18 +1073,8 @@ function renderQueue(list) {
   const structKey = _queueStructKey(list);
 
   if (_lastQueueStructKey === structKey) {
-    // Structure unchanged — surgical updates only (count, progress, per-video percent/speed)
+    // Structure unchanged — surgical updates only (per-video percent/speed)
     list.forEach(j => {
-      const total = j.total_videos ?? "?";
-      const dl    = j.downloaded ?? 0;
-      const pct   = total !== "?" && total > 0 ? Math.round(dl / total * 100) : 0;
-
-      const countEl = document.getElementById(`jcount-${j.id}`);
-      if (countEl) countEl.textContent = total === "?" ? t("p2_count_only", dl) : t("p2_count_both", dl, total);
-
-      const fillEl = document.getElementById(`jprogfill-${j.id}`);
-      if (fillEl) fillEl.style.width = pct + "%";
-
       Object.entries(j.videos || {}).forEach(([k, v]) => {
         if (v.status !== "downloading") return;
         const h = _h(k);
@@ -1103,11 +1098,27 @@ function renderQueue(list) {
 
 function renderChannelCard(j) {
   const total = j.total_videos ?? "?";
-  const dl    = j.downloaded ?? 0;
-  const pct   = total !== "?" && total > 0 ? Math.round(dl / total * 100) : 0;
   const expanded = expandedJobIds.has(j.id);
   const isRunning = j.status === "running" || j.status === "prefetching";
   const isQueued  = j.status === "queued";
+
+  // Status counts from video list
+  const vids        = Object.values(j.videos || {});
+  const cDone       = vids.filter(v => v.status === "done").length;
+  const cExists     = vids.filter(v => v.status === "exists").length;
+  const cSkipped    = vids.filter(v => v.status === "skipped").length;
+  const cError      = vids.filter(v => v.status === "error").length;
+  const cDl         = vids.filter(v => v.status === "downloading").length;
+  const processed   = cDone + cExists + cSkipped;   // settled (not pending/dl/error)
+
+  // Segmented bar — widths as % of total
+  const _seg = (n) => total !== "?" && total > 0 ? (n / total * 100).toFixed(1) : 0;
+  const segBar = `
+    <div class="ch-seg ch-seg-done"    style="width:${_seg(cDone)}%"></div>
+    <div class="ch-seg ch-seg-exists"  style="width:${_seg(cExists)}%"></div>
+    <div class="ch-seg ch-seg-skipped" style="width:${_seg(cSkipped)}%"></div>
+    <div class="ch-seg ch-seg-error"   style="width:${_seg(cError)}%"></div>
+    <div class="ch-seg ch-seg-dl"      style="width:${_seg(cDl)}%"></div>`;
 
   const statusBadge = {
     pending:    `<span class="badge bd-pending">${t("badge_pending")}</span>`,
@@ -1119,7 +1130,9 @@ function renderChannelCard(j) {
   }[j.status] || '';
 
   const letter = (j.channel_name || j.name || "?")[0].toUpperCase();
-  const countStr = total === "?" ? t("p2_count_only", dl) : t("p2_count_both", dl, total);
+  const countStr = total !== "?" && total > 0
+    ? t("p2_count_both", processed, total)
+    : t("p2_count_only", processed);
   const createdDate = j.created_at ? j.created_at.slice(0,10) : "";
   const cookieBadge = j.cookies_file ? `<span class="ch-cookie">🍪 Cookies</span>` : "";
 
@@ -1200,9 +1213,7 @@ function renderChannelCard(j) {
       </div>
       <div class="ch-right">
         <div class="ch-count" id="jcount-${j.id}">${countStr}</div>
-        <div class="ch-progress">
-          <div class="ch-progress-fill" id="jprogfill-${j.id}" style="width:${pct}%"></div>
-        </div>
+        <div class="ch-progress">${segBar}</div>
         ${statusBadge}
         ${isRunning
           ? `<button class="btn btn-danger btn-sm" style="flex-shrink:0" onclick="stopJob('${j.id}',event)">${t("p2_checking")}</button>`
