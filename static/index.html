@@ -116,6 +116,7 @@ input:focus, select:focus { border-color: #7c6dfa; }
   font-size: .7rem; font-weight: 700; white-space: nowrap;
 }
 .bd-pending   { background: #2d2a00; color: #f0c040; }
+.bd-queued    { background: #2a1a00; color: #f0a040; }
 .bd-prefetch  { background: #002a40; color: #60c8f0; }
 .bd-running   { background: #002a1a; color: #3ddc84; }
 .bd-done      { background: #001a2a; color: #50b8e8; }
@@ -630,6 +631,21 @@ input:focus, select:focus { border-color: #7c6dfa; }
       <span id="currentDownloadDir" style="color:#aaa">Loading...</span>
     </div>
 
+    <label style="margin-top:18px" data-i18n="s_concurrency_label">Max Concurrent Channels</label>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
+      <input type="number" id="maxConcurrentInput" min="0" step="1" value="0"
+        style="width:80px;text-align:center"
+        oninput="_updateScheduleCardState(parseInt(this.value)||0)">
+      <span class="text-muted" style="font-size:.78rem" data-i18n="s_concurrency_hint">0 = unlimited</span>
+    </div>
+
+    <label style="margin-top:18px" data-i18n="s_interval_label">Download Interval (seconds)</label>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
+      <input type="number" id="downloadIntervalInput" min="0" step="1" value="0"
+        style="width:80px;text-align:center">
+      <span class="text-muted" style="font-size:.78rem" data-i18n="s_interval_hint">0 = disabled · min 5 when enabled</span>
+    </div>
+
     <div style="margin-top:18px;display:flex;gap:10px;align-items:center">
       <button class="btn btn-primary" onclick="saveSettings()" data-i18n="s_save">Save Settings</button>
       <span id="settingsSaveMsg" style="font-size:.82rem;color:#3ddc84;display:none" data-i18n="s_saved">✓ Saved</span>
@@ -637,43 +653,37 @@ input:focus, select:focus { border-color: #7c6dfa; }
     </div>
   </div>
 
-  <!-- Floating Player -->
-  <div class="card">
-    <div class="section-title" data-i18n="s_player_title">Floating Player</div>
-
-    <label style="margin-top:0" data-i18n="s_play_mode">Play Mode</label>
-    <div style="display:flex;gap:16px;margin-top:8px;flex-wrap:wrap">
-      <label style="display:flex;align-items:center;gap:8px;margin:0;color:#ccc;font-size:.88rem;cursor:pointer">
-        <input type="radio" name="fpMode" value="single" id="fpModeSingle">
-        <span data-i18n="s_single_mode">Single (close existing when opening new)</span>
-      </label>
-      <label style="display:flex;align-items:center;gap:8px;margin:0;color:#ccc;font-size:.88rem;cursor:pointer">
-        <input type="radio" name="fpMode" value="multi" id="fpModeMulti">
-        <span data-i18n="s_multi_mode">Multi (open multiple simultaneously)</span>
-      </label>
+  <!-- Scheduled Trigger -->
+  <div class="card" id="scheduleCard">
+    <div class="section-title" data-i18n="s_schedule_title">Scheduled Trigger</div>
+    <div id="scheduleDisabledHint" style="font-size:.82rem;color:#888;margin-top:6px;display:none" data-i18n="s_schedule_disabled">
+      Set Max Concurrent Channels to exactly 1 to enable scheduled triggers.
     </div>
-
-    <div style="margin-top:16px;display:flex;align-items:center;gap:10px">
-      <input type="checkbox" id="fpEnabled" style="width:auto;accent-color:#7c6dfa;cursor:pointer">
-      <label for="fpEnabled" style="margin:0;color:#ccc;font-size:.88rem;cursor:pointer" data-i18n="s_enable_fp">Enable Floating Player</label>
-    </div>
-
-    <div style="margin-top:12px;display:flex;align-items:center;gap:10px">
-      <input type="checkbox" id="fpMuteDefault" style="width:auto;accent-color:#7c6dfa;cursor:pointer">
-      <label for="fpMuteDefault" style="margin:0;color:#ccc;font-size:.88rem;cursor:pointer" data-i18n="s_mute_default">Default Mute</label>
-    </div>
-
-    <label style="margin-top:16px" data-i18n="s_default_volume">Default Volume</label>
-    <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
-      <input type="range" id="fpVolumeDefault" min="0" max="100" value="20" step="1"
-        style="width:160px;accent-color:#7c6dfa;cursor:pointer"
-        oninput="document.getElementById('fpVolumeLbl').textContent=this.value+'%'">
-      <span id="fpVolumeLbl" style="font-size:.82rem;color:#888;min-width:36px">20%</span>
-    </div>
-
-    <div style="margin-top:18px;display:flex;gap:10px;align-items:center">
-      <button class="btn btn-primary" onclick="savePlayerSettings()" data-i18n="s_save_player">Save</button>
-      <span id="fpSettingsSaveMsg" style="font-size:.82rem;color:#3ddc84;display:none" data-i18n="s_fp_saved">✓ Saved</span>
+    <div id="scheduleContent">
+      <div style="display:flex;align-items:center;gap:10px;margin-top:8px">
+        <input type="checkbox" id="scheduleEnabled" style="width:auto;accent-color:#7c6dfa;cursor:pointer">
+        <label for="scheduleEnabled" style="margin:0;color:#ccc;font-size:.88rem;cursor:pointer" data-i18n="s_schedule_enable">Enable scheduled trigger</label>
+      </div>
+      <div style="margin-top:14px">
+        <div style="font-size:.82rem;color:#888;margin-bottom:8px" data-i18n="s_schedule_days">Days</div>
+        <div style="display:flex;gap:10px;flex-wrap:wrap">
+          <label style="display:flex;align-items:center;gap:6px;margin:0;color:#ccc;font-size:.85rem;cursor:pointer"><input type="checkbox" class="sched-day" value="0" style="width:auto;accent-color:#7c6dfa"> <span data-i18n="day_mon">Mon</span></label>
+          <label style="display:flex;align-items:center;gap:6px;margin:0;color:#ccc;font-size:.85rem;cursor:pointer"><input type="checkbox" class="sched-day" value="1" style="width:auto;accent-color:#7c6dfa"> <span data-i18n="day_tue">Tue</span></label>
+          <label style="display:flex;align-items:center;gap:6px;margin:0;color:#ccc;font-size:.85rem;cursor:pointer"><input type="checkbox" class="sched-day" value="2" style="width:auto;accent-color:#7c6dfa"> <span data-i18n="day_wed">Wed</span></label>
+          <label style="display:flex;align-items:center;gap:6px;margin:0;color:#ccc;font-size:.85rem;cursor:pointer"><input type="checkbox" class="sched-day" value="3" style="width:auto;accent-color:#7c6dfa"> <span data-i18n="day_thu">Thu</span></label>
+          <label style="display:flex;align-items:center;gap:6px;margin:0;color:#ccc;font-size:.85rem;cursor:pointer"><input type="checkbox" class="sched-day" value="4" style="width:auto;accent-color:#7c6dfa"> <span data-i18n="day_fri">Fri</span></label>
+          <label style="display:flex;align-items:center;gap:6px;margin:0;color:#ccc;font-size:.85rem;cursor:pointer"><input type="checkbox" class="sched-day" value="5" style="width:auto;accent-color:#7c6dfa"> <span data-i18n="day_sat">Sat</span></label>
+          <label style="display:flex;align-items:center;gap:6px;margin:0;color:#ccc;font-size:.85rem;cursor:pointer"><input type="checkbox" class="sched-day" value="6" style="width:auto;accent-color:#7c6dfa"> <span data-i18n="day_sun">Sun</span></label>
+        </div>
+      </div>
+      <div style="margin-top:14px;display:flex;align-items:center;gap:10px">
+        <span style="font-size:.82rem;color:#888" data-i18n="s_schedule_time">Trigger time</span>
+        <input type="time" id="scheduleTime" value="12:00" style="width:120px;background:#1e1e2e;border:1px solid #2d2d3f;color:#ccc;border-radius:6px;padding:4px 8px;font-size:.85rem">
+      </div>
+      <div style="margin-top:16px;display:flex;gap:10px;align-items:center">
+        <button class="btn btn-primary btn-sm" onclick="saveSchedule()" data-i18n="s_schedule_save">Save</button>
+        <span id="scheduleSaveMsg" style="font-size:.82rem;color:#3ddc84;display:none" data-i18n="s_schedule_saved">✓ Saved</span>
+      </div>
     </div>
   </div>
 
@@ -730,6 +740,49 @@ input:focus, select:focus { border-color: #7c6dfa; }
       <button class="btn btn-ghost btn-sm" onclick="setLang('en')" id="langBtn-en">English</button>
       <button class="btn btn-ghost btn-sm" onclick="setLang('zh-TW')" id="langBtn-zh-TW">繁體中文</button>
       <button class="btn btn-ghost btn-sm" onclick="setLang('zh-CN')" id="langBtn-zh-CN">简体中文</button>
+    </div>
+  </div>
+
+  <!-- Floating Player -->
+  <div class="card">
+    <div class="section-title" data-i18n="s_player_title">Floating Player</div>
+
+    <div style="margin-top:0;display:flex;align-items:center;gap:10px">
+      <input type="checkbox" id="fpEnabled" style="width:auto;accent-color:#7c6dfa;cursor:pointer"
+        onchange="_updateFpPlayMode(this.checked)">
+      <label for="fpEnabled" style="margin:0;color:#ccc;font-size:.88rem;cursor:pointer" data-i18n="s_enable_fp">Enable Floating Player</label>
+    </div>
+
+    <div id="fpPlayModeRow" style="margin-top:14px">
+      <label style="font-size:.82rem;color:#888;display:block;margin-bottom:8px" data-i18n="s_play_mode">Play Mode</label>
+      <div style="display:flex;gap:16px;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:8px;margin:0;color:#ccc;font-size:.88rem;cursor:pointer">
+          <input type="radio" name="fpMode" value="single" id="fpModeSingle">
+          <span data-i18n="s_single_mode">Single (close existing when opening new)</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;margin:0;color:#ccc;font-size:.88rem;cursor:pointer">
+          <input type="radio" name="fpMode" value="multi" id="fpModeMulti">
+          <span data-i18n="s_multi_mode">Multi (open multiple simultaneously)</span>
+        </label>
+      </div>
+    </div>
+
+    <div style="margin-top:12px;display:flex;align-items:center;gap:10px">
+      <input type="checkbox" id="fpMuteDefault" style="width:auto;accent-color:#7c6dfa;cursor:pointer">
+      <label for="fpMuteDefault" style="margin:0;color:#ccc;font-size:.88rem;cursor:pointer" data-i18n="s_mute_default">Default Mute</label>
+    </div>
+
+    <label style="margin-top:16px" data-i18n="s_default_volume">Default Volume</label>
+    <div style="display:flex;align-items:center;gap:10px;margin-top:6px">
+      <input type="range" id="fpVolumeDefault" min="0" max="100" value="20" step="1"
+        style="width:160px;accent-color:#7c6dfa;cursor:pointer"
+        oninput="document.getElementById('fpVolumeLbl').textContent=this.value+'%'">
+      <span id="fpVolumeLbl" style="font-size:.82rem;color:#888;min-width:36px">20%</span>
+    </div>
+
+    <div style="margin-top:18px;display:flex;gap:10px;align-items:center">
+      <button class="btn btn-primary" onclick="savePlayerSettings()" data-i18n="s_save_player">Save</button>
+      <span id="fpSettingsSaveMsg" style="font-size:.82rem;color:#3ddc84;display:none" data-i18n="s_fp_saved">✓ Saved</span>
     </div>
   </div>
 
@@ -966,7 +1019,7 @@ let _lastQueueStructKey = null;
 function _queueStructKey(list) {
   return JSON.stringify(list.map(j => ({
     id: j.id,
-    status: j.status,
+    status: j.status,   // includes "queued"
     total: j.total_videos,
     expanded: expandedJobIds.has(j.id),
     secV: expandedSections.has(`${j.id}-videos`),
@@ -1054,9 +1107,11 @@ function renderChannelCard(j) {
   const pct   = total !== "?" && total > 0 ? Math.round(dl / total * 100) : 0;
   const expanded = expandedJobIds.has(j.id);
   const isRunning = j.status === "running" || j.status === "prefetching";
+  const isQueued  = j.status === "queued";
 
   const statusBadge = {
     pending:    `<span class="badge bd-pending">${t("badge_pending")}</span>`,
+    queued:     `<span class="badge bd-queued">${t("badge_queued")}</span>`,
     prefetching:`<span class="badge bd-prefetch">${t("badge_prefetch")}</span>`,
     running:    `<span class="badge bd-running">${t("badge_running")}</span>`,
     done:       `<span class="badge bd-done">${t("badge_done")}</span>`,
@@ -1081,8 +1136,9 @@ function renderChannelCard(j) {
       merging:    `<span class="badge bd-vdl">${t("vid_merging")}</span>`,
     }[v.status] || '';
     const showBar = v.status === "downloading" && v.percent > 0;
-    const errLine = (v.status === "error" || v.status === "skipped") && v.error_msg
-      ? `<div class="vid-error">${esc(v.error_msg)}</div>` : "";
+    const errText = (v.status === "error" || v.status === "skipped")
+      ? (v.error_i18n ? t(v.error_i18n.key, ...v.error_i18n.args) : v.error_msg) : "";
+    const errLine = errText ? `<div class="vid-error">${esc(errText)}</div>` : "";
     const h = _h(vidKey);
     const barHtml = showBar ? `
       <div class="vid-progress-wrap" id="vbar-${jobId}-${h}"><div class="vid-progress-bar" style="width:${v.percent}%"></div></div>
@@ -1150,7 +1206,9 @@ function renderChannelCard(j) {
         ${statusBadge}
         ${isRunning
           ? `<button class="btn btn-danger btn-sm" style="flex-shrink:0" onclick="stopJob('${j.id}',event)">${t("p2_checking")}</button>`
-          : `<button class="btn btn-primary btn-sm" style="flex-shrink:0" onclick="restartJob('${j.id}',event)">${t("p2_update")}</button>`}
+          : isQueued
+            ? `<button class="btn btn-ghost btn-sm" style="flex-shrink:0" onclick="stopJob('${j.id}',event)">${t("p2_dequeue")}</button>`
+            : `<button class="btn btn-primary btn-sm" style="flex-shrink:0" onclick="restartJob('${j.id}',event)">${t("p2_update")}</button>`}
         <span class="ch-chevron">▶</span>
       </div>
     </div>
@@ -1821,6 +1879,16 @@ async function loadSettings() {
   const data = await res.json();
   document.getElementById("settingDownloadDir").value = data.download_dir || "";
   document.getElementById("currentDownloadDir").textContent = data.download_dir || t("s_not_set");
+  document.getElementById("downloadIntervalInput").value = data.download_interval ?? 0;
+  const conc = data.max_concurrent_channels ?? 0;
+  document.getElementById("maxConcurrentInput").value = conc;
+  _updateScheduleCardState(conc);
+  const sched = data.schedule || {};
+  document.getElementById("scheduleEnabled").checked = !!sched.enabled;
+  document.querySelectorAll(".sched-day").forEach(cb => {
+    cb.checked = (sched.days || []).includes(parseInt(cb.value));
+  });
+  document.getElementById("scheduleTime").value = sched.time || "12:00";
   const mode = data.check_mode || "full";
   const radio = document.querySelector(`input[name=checkMode][value="${mode}"]`);
   if (radio) radio.checked = true;
@@ -1855,7 +1923,11 @@ async function saveSettings() {
   const res  = await fetch("/api/settings", {
     method: "POST",
     headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({ download_dir: dir })
+    body: JSON.stringify({
+      download_dir: dir,
+      download_interval: parseInt(document.getElementById("downloadIntervalInput").value) || 0,
+      max_concurrent_channels: parseInt(document.getElementById("maxConcurrentInput").value) || 0,
+    })
   });
   const data = await res.json();
 
@@ -1864,6 +1936,37 @@ async function saveSettings() {
     err.style.display = "inline";
   } else {
     document.getElementById("currentDownloadDir").textContent = data.settings.download_dir;
+    _updateScheduleCardState(data.settings.max_concurrent_channels ?? 0);
+    msg.style.display = "inline";
+    setTimeout(() => { msg.style.display = "none"; }, 3000);
+  }
+}
+
+function _updateScheduleCardState(concurrency) {
+  const disabled = concurrency !== 1;
+  document.getElementById("scheduleDisabledHint").style.display = disabled ? "block" : "none";
+  document.getElementById("scheduleContent").style.opacity = disabled ? "0.35" : "1";
+  document.getElementById("scheduleContent").style.pointerEvents = disabled ? "none" : "";
+}
+
+async function saveSchedule() {
+  const days = [...document.querySelectorAll(".sched-day:checked")].map(cb => parseInt(cb.value));
+  const res = await fetch("/api/settings", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+      download_dir: document.getElementById("settingDownloadDir").value.trim()
+                 || document.getElementById("currentDownloadDir").textContent,
+      schedule: {
+        enabled: document.getElementById("scheduleEnabled").checked,
+        days,
+        time: document.getElementById("scheduleTime").value,
+      }
+    })
+  });
+  const data = await res.json();
+  if (!data.error) {
+    const msg = document.getElementById("scheduleSaveMsg");
     msg.style.display = "inline";
     setTimeout(() => { msg.style.display = "none"; }, 3000);
   }
@@ -1888,6 +1991,13 @@ function loadPlayerSettings() {
   document.getElementById("fpVolumeDefault").value = vol;
   document.getElementById("fpVolumeLbl").textContent = vol + "%";
   document.getElementById("fpEnabled").checked = enabled;
+  _updateFpPlayMode(enabled);
+}
+
+function _updateFpPlayMode(enabled) {
+  const row = document.getElementById("fpPlayModeRow");
+  row.style.opacity       = enabled ? "1" : "0.35";
+  row.style.pointerEvents = enabled ? "" : "none";
 }
 
 function savePlayerSettings() {

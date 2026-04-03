@@ -1,4 +1,4 @@
-import os, json, shutil, threading, uuid, re
+import os, json, shutil, threading, uuid, re, time
 from pathlib import Path
 from datetime import datetime
 from difflib import SequenceMatcher
@@ -17,6 +17,12 @@ COOKIES_DIR.mkdir(exist_ok=True)
 jobs: dict = {}
 jobs_lock    = threading.Lock()
 _stop_flags: dict[str, threading.Event] = {}   # job_id → Event; set to stop download
+
+# ── Channel concurrency queue ──────────────────────────────────────────────────
+_job_queue: list       = []    # job_ids waiting for a free slot
+_running_count: int    = 0     # channels currently downloading
+_queue_lock            = threading.Lock()
+_last_schedule_key: str | None = None   # prevents double-firing in same minute
 
 # ── Settings ──────────────────────────────────────────────────────────────────
 
@@ -117,10 +123,11 @@ def _recover_interrupted_jobs(jobs_dict: dict):
             # Reset stuck video states so progress is accurate on next run
             for v in job.get("videos", {}).values():
                 if v.get("status") in ("downloading", "pending"):
-                    v["status"]    = "error"
-                    v["error_msg"] = "服務重啟中斷"
-                    v["percent"]   = 0
-                    v["speed"]     = None
+                    v["status"]     = "error"
+                    v["error_msg"]  = "服務重啟中斷"
+                    v["error_i18n"] = {"key": "err_restart_interrupted", "args": []}
+                    v["percent"]    = 0
+                    v["speed"]      = None
     return jobs_dict
 
 
@@ -279,6 +286,74 @@ def fetch_channel_info(url: str, cookies_file: str | None, max_items: int | None
         return channel_name, len(entries), entries
     except Exception:
         return None, 0, []
+
+
+def _enqueue_or_start(job_id: str):
+    """Start the job immediately if a slot is free; otherwise add to queue."""
+    global _running_count
+    limit = int(settings.get("max_concurrent_channels", 0))
+    with _queue_lock:
+        if limit == 0 or _running_count < limit:
+            _running_count += 1
+            start_now = True
+        else:
+            if job_id not in _job_queue:
+                _job_queue.append(job_id)
+            with jobs_lock:
+                if job_id in jobs and jobs[job_id]["status"] not in ("running", "prefetching"):
+                    jobs[job_id]["status"] = "queued"
+                    save_jobs()
+            start_now = False
+    if start_now:
+        threading.Thread(target=run_download, args=(job_id,), daemon=True).start()
+
+
+def _try_start_next():
+    """Called when a download finishes; start the next queued job if a slot opened up."""
+    global _running_count
+    limit = int(settings.get("max_concurrent_channels", 0))
+    with _queue_lock:
+        if not _job_queue:
+            return
+        if limit > 0 and _running_count >= limit:
+            return
+        next_id = _job_queue.pop(0)
+        _running_count += 1
+    threading.Thread(target=run_download, args=(next_id,), daemon=True).start()
+
+
+def _scheduler_loop():
+    """Background thread: fires download queue on configured weekly schedule."""
+    global _last_schedule_key
+    while True:
+        time.sleep(30)
+        try:
+            sched = settings.get("schedule", {})
+            if not sched.get("enabled"):
+                continue
+            if int(settings.get("max_concurrent_channels", 0)) != 1:
+                continue
+            now = datetime.now()
+            days = [str(d) for d in sched.get("days", [])]
+            if str(now.weekday()) not in days:
+                continue
+            try:
+                h, m = map(int, sched.get("time", "00:00").split(":"))
+            except Exception:
+                continue
+            if now.hour != h or now.minute != m:
+                continue
+            trigger_key = f"{now.year}-{now.month}-{now.day}-{h}-{m}"
+            if _last_schedule_key == trigger_key:
+                continue
+            _last_schedule_key = trigger_key
+            with jobs_lock:
+                ids = [jid for jid, j in jobs.items()
+                       if j.get("status") not in ("running", "prefetching", "queued")]
+            for jid in ids:
+                _enqueue_or_start(jid)
+        except Exception:
+            pass
 
 
 def run_download(job_id: str):
@@ -441,32 +516,36 @@ def run_download(job_id: str):
         for kw in exclude_kws:
             if kw.lower() in title.lower():
                 reason = f"跳過：標題含「{kw}」"
-                _set_vid_status(vid_id, "skipped", reason)
+                _set_vid_status(vid_id, "skipped", reason, "err_exclude_kw", [kw])
                 return reason
         if require_kws:
             if not any(kw.lower() in title.lower() for kw in require_kws):
                 reason = f"跳過：標題未含必須關鍵字（{'、'.join(require_kws)}）"
-                _set_vid_status(vid_id, "skipped", reason)
+                _set_vid_status(vid_id, "skipped", reason, "err_require_kw", ["、".join(require_kws)])
                 return reason
         dur = info_dict.get("duration")
         if dur is not None:
             if min_dur and dur < min_dur:
                 reason = f"跳過：時長 {int(dur)}s < {min_dur}s"
-                _set_vid_status(vid_id, "skipped", reason); return reason
+                _set_vid_status(vid_id, "skipped", reason, "err_too_short", [int(dur), min_dur]); return reason
             if max_dur and dur > max_dur:
                 reason = f"跳過：時長 {int(dur)}s > {max_dur}s"
-                _set_vid_status(vid_id, "skipped", reason); return reason
+                _set_vid_status(vid_id, "skipped", reason, "err_too_long", [int(dur), max_dur]); return reason
         views = info_dict.get("view_count")
         if views is not None and min_views and views < min_views:
             reason = f"跳過：觀看數 {views} < {min_views}"
-            _set_vid_status(vid_id, "skipped", reason); return reason
+            _set_vid_status(vid_id, "skipped", reason, "err_too_few_views", [views, min_views]); return reason
         return None
 
-    def _set_vid_status(vid_id, status, msg=""):
+    def _set_vid_status(vid_id, status, msg="", i18n_key=None, i18n_args=None):
         with jobs_lock:
             if vid_id and vid_id in jobs[job_id]["videos"]:
                 jobs[job_id]["videos"][vid_id]["status"]    = status
                 jobs[job_id]["videos"][vid_id]["error_msg"] = msg
+                if i18n_key:
+                    jobs[job_id]["videos"][vid_id]["error_i18n"] = {"key": i18n_key, "args": i18n_args or []}
+                else:
+                    jobs[job_id]["videos"][vid_id].pop("error_i18n", None)
 
     def on_progress(d):
         info_dict = d.get("info_dict", {})
@@ -555,11 +634,20 @@ def run_download(job_id: str):
             log(f"[info] 使用 cookies: {cookies_file}")
 
     # Build download URL list
-    # Fast mode: pass the original channel/playlist URL directly to yt-dlp
-    # Full mode: use the pre-fetched per-video URLs, skipping "exists" ones
-    if check_mode == "fast":
+    # Fast mode with existing list: reuse stored video IDs, retry errors
+    # Fast mode without list: fall back to passing channel URL directly to yt-dlp
+    # Full/Recent mode: use the pre-fetched per-video URLs
+    if check_mode == "fast" and not _prev_videos:
         ordered_urls = [url]
     else:
+        if check_mode == "fast":
+            # Reset interrupted/errored videos so they get retried
+            with jobs_lock:
+                for v in jobs[job_id]["videos"].values():
+                    if v.get("status") == "error":
+                        v["status"]   = "pending"
+                        v["error_msg"] = ""
+                        v.pop("error_i18n", None)
         with jobs_lock:
             all_vid_items = list(jobs[job_id]["videos"].items())
 
@@ -569,8 +657,29 @@ def run_download(job_id: str):
             with jobs_lock:
                 for vid_id in invalid_ids:
                     if vid_id in jobs[job_id]["videos"]:
-                        jobs[job_id]["videos"][vid_id]["status"] = "skipped"
-                        jobs[job_id]["videos"][vid_id]["error_msg"] = "非影片項目（頻道/播放清單 ID）"
+                        jobs[job_id]["videos"][vid_id]["status"]     = "skipped"
+                        jobs[job_id]["videos"][vid_id]["error_msg"]  = "非影片項目（頻道/播放清單 ID）"
+                        jobs[job_id]["videos"][vid_id]["error_i18n"] = {"key": "err_invalid_id", "args": []}
+
+        # Pre-filter by stored title before handing URLs to yt-dlp.
+        # This avoids unnecessary API/auth calls (e.g. age-verification) for
+        # videos that would be excluded by keyword filters anyway.
+        for vid_id, v in all_vid_items:
+            if len(vid_id) != 11 or v["status"] != "pending":
+                continue
+            title = v.get("title", "")
+            for kw in exclude_kws:
+                if kw.lower() in title.lower():
+                    _set_vid_status(vid_id, "skipped", f"跳過：標題含「{kw}」", "err_exclude_kw", [kw])
+                    break
+            else:
+                if require_kws and not any(kw.lower() in title.lower() for kw in require_kws):
+                    _set_vid_status(vid_id, "skipped",
+                                    f"跳過：標題未含必須關鍵字（{'、'.join(require_kws)}）",
+                                    "err_require_kw", ["、".join(require_kws)])
+
+        with jobs_lock:
+            all_vid_items = list(jobs[job_id]["videos"].items())
 
         pending_ids = [vid_id for vid_id, v in all_vid_items
                        if len(vid_id) == 11 and v["status"] == "pending"]
@@ -582,12 +691,25 @@ def run_download(job_id: str):
     # Remove playlistend since we're controlling order/count ourselves
     dl_opts.pop("playlistend", None)
 
+    dl_interval = max(5, int(settings.get("download_interval", 0))) \
+                  if int(settings.get("download_interval", 0)) > 0 else 0
+
     try:
         with yt_dlp.YoutubeDL(dl_opts) as ydl:
-            for video_url in ordered_urls:
+            for i, video_url in enumerate(ordered_urls):
                 if _stop_event.is_set():
                     log("[info] 使用者強制停止下載")
                     break
+                # Interval between downloads (skip before first video)
+                if dl_interval and i > 0:
+                    log(f"[info] 等待 {dl_interval} 秒後繼續下載…")
+                    for _ in range(dl_interval):
+                        if _stop_event.is_set():
+                            break
+                        time.sleep(1)
+                    if _stop_event.is_set():
+                        log("[info] 使用者強制停止下載")
+                        break
                 vid_id = video_url.split("v=")[-1]
                 _cur["vid_id"]    = vid_id
                 _cur["last_error"] = None
@@ -623,8 +745,9 @@ def run_download(job_id: str):
                         v["status"]    = "exists"
                         v["error_msg"] = ""
                     elif v["status"] == "pending":
-                        v["status"]    = "error"
-                        v["error_msg"] = "格式不可用或下載失敗"
+                        v["status"]     = "error"
+                        v["error_msg"]  = "格式不可用或下載失敗"
+                        v["error_i18n"] = {"key": "err_format_unavailable", "args": []}
             jobs[job_id]["status"]      = "done"
             jobs[job_id]["finished_at"] = datetime.now().isoformat()
             save_jobs()
@@ -635,6 +758,10 @@ def run_download(job_id: str):
             jobs[job_id]["finished_at"] = datetime.now().isoformat()
             save_jobs()
     finally:
+        global _running_count
+        with _queue_lock:
+            _running_count = max(0, _running_count - 1)
+        _try_start_next()
         _stop_flags.pop(job_id, None)
         # Copy refreshed tokens back to the original, then remove temp copy.
         # yt-dlp rotates OAuth tokens during download; discarding the temp file
@@ -714,7 +841,7 @@ def create_job():
         save_jobs()
 
     if data.get("start", True):
-        threading.Thread(target=run_download, args=(job_id,), daemon=True).start()
+        _enqueue_or_start(job_id)
 
     return jsonify(job), 201
 
@@ -747,29 +874,40 @@ def start_job(job_id):
         job = jobs.get(job_id)
     if not job:
         return jsonify({"error": "not found"}), 404
-    if job["status"] == "running":
-        return jsonify({"error": "already running"}), 400
-    threading.Thread(target=run_download, args=(job_id,), daemon=True).start()
+    if job["status"] in ("running", "prefetching", "queued"):
+        return jsonify({"error": "already running or queued"}), 400
+    _enqueue_or_start(job_id)
     return jsonify({"ok": True})
 
 
 @app.route("/api/jobs/<job_id>/stop", methods=["POST"])
 def stop_job(job_id):
+    was_queued = False
+    with _queue_lock:
+        if job_id in _job_queue:
+            _job_queue.remove(job_id)
+            was_queued = True
     flag = _stop_flags.get(job_id)
     if flag:
         flag.set()
     with jobs_lock:
         job = jobs.get(job_id)
-        if job and job["status"] in ("running", "prefetching"):
-            job["status"]      = "error"
-            job["finished_at"] = datetime.now().isoformat()
-            job["logs"].append("[info] 使用者強制停止")
+        if job:
+            if was_queued:
+                job["status"] = "pending"
+            elif job["status"] in ("running", "prefetching"):
+                job["status"]      = "error"
+                job["finished_at"] = datetime.now().isoformat()
+                job["logs"].append("[info] 使用者強制停止")
             save_jobs()
     return jsonify({"ok": True})
 
 
 @app.route("/api/jobs/<job_id>", methods=["DELETE"])
 def delete_job(job_id):
+    with _queue_lock:
+        if job_id in _job_queue:
+            _job_queue.remove(job_id)
     with jobs_lock:
         if job_id not in jobs:
             return jsonify({"error": "not found"}), 404
@@ -1090,6 +1228,39 @@ def update_settings():
             settings["recent_count"] = max(1, int(data["recent_count"]))
         except (ValueError, TypeError):
             pass
+    if "download_interval" in data:
+        try:
+            v = int(data["download_interval"])
+            settings["download_interval"] = max(5, v) if v > 0 else 0
+        except (ValueError, TypeError):
+            pass
+    if "max_concurrent_channels" in data:
+        try:
+            v = int(data["max_concurrent_channels"])
+            if v < 0:
+                return jsonify({"error": "cannot be negative"}), 400
+            if v > 0:
+                with jobs_lock:
+                    job_count = len(jobs)
+                if job_count > 0 and v > job_count:
+                    return jsonify({"error": f"cannot exceed channel count ({job_count})"}), 400
+            settings["max_concurrent_channels"] = v
+            # If limit relaxed, try to start queued jobs
+            _try_start_next()
+        except (ValueError, TypeError):
+            pass
+    if "schedule" in data:
+        s = data["schedule"]
+        if isinstance(s, dict):
+            try:
+                days = [int(d) for d in s.get("days", []) if 0 <= int(d) <= 6]
+                settings["schedule"] = {
+                    "enabled": bool(s.get("enabled", False)),
+                    "days":    days,
+                    "time":    s.get("time", "12:00"),
+                }
+            except (ValueError, TypeError):
+                pass
     save_settings(settings)
     return jsonify({"ok": True, "settings": settings})
 
@@ -1102,4 +1273,5 @@ def serve_dl(filepath):
 
 
 if __name__ == "__main__":
+    threading.Thread(target=_scheduler_loop, daemon=True).start()
     app.run(host="0.0.0.0", port=5000, threaded=True)
