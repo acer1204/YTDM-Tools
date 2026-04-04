@@ -562,8 +562,8 @@ input:focus, select:focus { border-color: #7c6dfa; }
 <div class="page" id="page-media">
 
   <div class="media-toolbar">
-    <input type="search" id="mediaSearch" data-i18n-placeholder="search_ph" placeholder="Search videos..." oninput="loadMedia()">
-    <select id="mediaFolder" onchange="loadMedia()">
+    <input type="search" id="mediaSearch" data-i18n-placeholder="search_ph" placeholder="Search videos..." oninput="_applyFilters()">
+    <select id="mediaFolder" onchange="_applyFilters()">
       <option value="" data-i18n="all_channels">All Channels</option>
     </select>
     <div class="sort-btns">
@@ -581,7 +581,7 @@ input:focus, select:focus { border-color: #7c6dfa; }
         oninput="setTileSize(this.value)">
       <span id="tileSzLbl">260px</span>
     </div>
-    <button class="btn btn-ghost btn-sm" onclick="loadMedia()" data-i18n="p3_refresh">Refresh</button>
+    <button class="btn btn-ghost btn-sm" onclick="refreshMedia()" data-i18n="p3_refresh">Refresh</button>
   </div>
 
   <div id="mediaLoading" style="display:none;text-align:center;padding:60px 0;color:#666;font-size:.95rem">
@@ -1046,11 +1046,11 @@ async function loadQueue() {
   list.sort((a,b) => b.created_at.localeCompare(a.created_at));
   renderQueue(list);
 
-  // Detect any job that just transitioned to "done" → invalidate media cache
+  // Detect any job that just transitioned to "done" → silent background refresh
   list.forEach(j => {
     const prev = _jobStatuses[j.id];
     if (prev && prev !== "done" && j.status === "done") {
-      invalidateMediaCache();
+      loadMedia(true);
     }
     _jobStatuses[j.id] = j.status;
   });
@@ -1326,18 +1326,8 @@ let allMediaData = [];
 let mediaCursor  = 0;
 const TILE_BATCH = 60;
 
-let _mediaCache     = null;  // { key, data }
+let _allData        = [];     // full unfiltered list from server
 let _jobStatuses    = {};    // jobId → last known status (for detecting done transitions)
-
-function _mediaCacheKey() {
-  const search = document.getElementById("mediaSearch")?.value.trim() || "";
-  const folder = document.getElementById("mediaFolder")?.value || "";
-  return `${sortBy}|${sortAsc}|${search}|${folder}`;
-}
-
-function invalidateMediaCache() {
-  _mediaCache = null;
-}
 
 function setSortBy(key) {
   if (sortBy === key) sortAsc = !sortAsc;
@@ -1345,14 +1335,37 @@ function setSortBy(key) {
   ["name","date","size"].forEach(k =>
     document.getElementById("sb-"+k)?.classList.toggle("active", k === sortBy));
   document.getElementById("sb-asc").textContent = sortAsc ? "↑" : "↓";
-  invalidateMediaCache();
-  loadMedia();
+  _applyFilters();
 }
 function toggleSortDir() {
   sortAsc = !sortAsc;
   document.getElementById("sb-asc").textContent = sortAsc ? "↑" : "↓";
-  invalidateMediaCache();
-  loadMedia();
+  _applyFilters();
+}
+
+function _applyFilters() {
+  const search = (document.getElementById("mediaSearch")?.value || "").trim().toLowerCase();
+  const folder = document.getElementById("mediaFolder")?.value || "";
+  let filtered = _allData;
+  if (folder) filtered = filtered.filter(f => f.channel === folder);
+  if (search) filtered = filtered.filter(f => f.title.toLowerCase().includes(search));
+  const sorted = [...filtered];
+  if (sortBy === "name") {
+    sorted.sort((a, b) => {
+      const r = a.title.toLowerCase().localeCompare(b.title.toLowerCase());
+      return sortAsc ? r : -r;
+    });
+  } else if (sortBy === "date") {
+    sorted.sort((a, b) => {
+      const ka = a.upload_date || a.modified || "";
+      const kb = b.upload_date || b.modified || "";
+      const r = ka.localeCompare(kb);
+      return sortAsc ? r : -r;
+    });
+  } else if (sortBy === "size") {
+    sorted.sort((a, b) => sortAsc ? a.size - b.size : b.size - a.size);
+  }
+  _applyMediaData(sorted);
 }
 function setTileSize(v) {
   document.documentElement.style.setProperty("--tile-w", v + "px");
@@ -1388,48 +1401,50 @@ function _applyMediaData(data) {
 }
 
 async function loadMedia(background = false) {
-  const search = document.getElementById("mediaSearch").value.trim();
-  const folder = document.getElementById("mediaFolder").value;
-  const params = new URLSearchParams({ sort: sortBy, asc: sortAsc });
-  if (search) params.set("search", search);
-  if (folder) params.set("folder", folder);
-
   const wall    = document.getElementById("tvWall");
   const loading = document.getElementById("mediaLoading");
-  const cacheKey = _mediaCacheKey();
 
-  // If cache valid for current params → show instantly, refresh in background
-  if (!background && _mediaCache && _mediaCache.key === cacheKey) {
-    loading.style.display = "none";
-    _applyMediaData(_mediaCache.data);
-    // Trigger silent background refresh
-    loadMedia(true);
-    return;
-  }
-
-  // Background refresh: fetch silently, update only if changed + not scrolled far
+  // Background refresh: fetch silently, update _allData and re-apply filters
   if (background) {
     try {
-      const res   = await fetch("/api/media?" + params);
-      const fresh = await res.json();
-      const oldKeys = (_mediaCache?.data || []).map(f => f.rel_path).join(",");
-      const newKeys = fresh.map(f => f.rel_path).join(",");
-      _mediaCache = { key: cacheKey, data: fresh };
-      if (oldKeys !== newKeys && window.scrollY < 300) {
-        _applyMediaData(fresh);
-      }
+      const res  = await fetch("/api/media");
+      const data = await res.json();
+      const oldKeys = _allData.map(f => f.rel_path).join(",");
+      const newKeys = data.map(f => f.rel_path).join(",");
+      _allData = data;
+      if (oldKeys !== newKeys) _applyFilters();
     } catch {}
     return;
   }
 
-  // No cache: show spinner, fetch, render
+  // Data already loaded: apply filters instantly, no fetch
+  if (_allData.length > 0) {
+    loading.style.display = "none";
+    _applyFilters();
+    return;
+  }
+
+  // Cold start: show spinner, fetch, render
   wall.innerHTML = "";
   loading.style.display = "block";
-  const res  = await fetch("/api/media?" + params);
-  const data = await res.json();
-  _mediaCache = { key: cacheKey, data };
+  const res  = await fetch("/api/media");
+  _allData   = await res.json();
   loading.style.display = "none";
-  _applyMediaData(data);
+  _applyFilters();
+}
+
+async function refreshMedia() {
+  const wall    = document.getElementById("tvWall");
+  const loading = document.getElementById("mediaLoading");
+  wall.innerHTML = "";
+  loading.style.display = "block";
+  try {
+    const res = await fetch("/api/media/refresh", { method: "POST" });
+    _allData  = await res.json();
+    await loadFolders();
+  } catch {}
+  loading.style.display = "none";
+  _applyFilters();
 }
 
 let _scrollObserver = null;

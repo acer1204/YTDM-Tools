@@ -63,6 +63,104 @@ VIDEO_EXTS = {".mp4", ".mkv", ".webm", ".avi", ".mov", ".m4v", ".flv"}
 AUDIO_EXTS = {".m4a", ".mp3", ".opus", ".aac", ".ogg", ".flac", ".wav"}
 IMG_EXTS   = {".jpg", ".jpeg", ".png", ".webp"}
 
+# ── Media metadata cache ───────────────────────────────────────────────────────
+MEDIA_CACHE_FILE  = DATA_DIR / "media_cache.json"
+_media_cache: dict = {}          # cache_key → {"mtime": float, "entry": dict}
+_media_cache_lock  = threading.Lock()
+
+def _load_media_cache():
+    global _media_cache
+    if MEDIA_CACHE_FILE.exists():
+        try:
+            with open(MEDIA_CACHE_FILE, "r", encoding="utf-8") as f:
+                _media_cache = json.load(f)
+            return
+        except Exception:
+            pass
+    _media_cache = {}
+
+def _save_media_cache():
+    with _media_cache_lock:
+        data = dict(_media_cache)
+    try:
+        with open(MEDIA_CACHE_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False)
+    except Exception:
+        pass
+
+_load_media_cache()
+
+_media_list: list = []          # full in-memory list of all entries (unfiltered/unsorted)
+_media_list_lock  = threading.Lock()
+
+def _build_list_from_cache():
+    global _media_list
+    with _media_list_lock:
+        _media_list = [v["entry"] for v in _media_cache.values() if v.get("entry")]
+
+def _media_list_upsert(entry: dict):
+    """Insert or replace a single entry in _media_list by dir_rel."""
+    dir_rel = entry.get("dir_rel", "")
+    with _media_list_lock:
+        for i, e in enumerate(_media_list):
+            if e.get("dir_rel") == dir_rel:
+                _media_list[i] = entry
+                return
+        _media_list.append(entry)
+
+def _media_list_remove(dir_rel: str):
+    """Remove an entry from _media_list by dir_rel."""
+    with _media_list_lock:
+        for i, e in enumerate(_media_list):
+            if e.get("dir_rel") == dir_rel:
+                del _media_list[i]
+                return
+
+_build_list_from_cache()
+
+
+def _update_channel_media(channel_dir: Path):
+    """Scan a single channel folder and update _media_list + _media_cache for changed entries only."""
+    base = get_download_dir()
+    if not channel_dir.exists():
+        return
+    dir_files: dict[Path, list[Path]] = {}
+    try:
+        for f in channel_dir.rglob("*"):
+            if f.is_file() and f.suffix.lower() in VIDEO_EXTS | AUDIO_EXTS:
+                dir_files.setdefault(f.parent, []).append(f)
+    except Exception:
+        return
+    dirty = False
+    for d, files in dir_files.items():
+        try:
+            dir_mtime = d.stat().st_mtime
+        except OSError:
+            continue
+        stem_groups: dict[str, list[Path]] = {}
+        for f in files:
+            clean = re.sub(r'\.f\d{2,4}$', '', f.stem)
+            stem_groups.setdefault(clean, []).append(f)
+        if len(stem_groups) == 1:
+            cache_key = str(d.relative_to(base)).replace("\\", "/")
+            entry, updated = _cached_entry(base, d, files, cache_key, dir_mtime, None)
+            if updated and entry:
+                _media_list_upsert(entry)
+                dirty = True
+        else:
+            for stem, stem_files in stem_groups.items():
+                cache_key = str(d.relative_to(base)).replace("\\", "/") + "\x00" + stem
+                try:
+                    stem_mtime = max(f.stat().st_mtime for f in stem_files)
+                except OSError:
+                    stem_mtime = dir_mtime
+                entry, updated = _cached_entry(base, d, stem_files, cache_key, stem_mtime, stem)
+                if updated and entry:
+                    _media_list_upsert(entry)
+                    dirty = True
+    if dirty:
+        _save_media_cache()
+
 
 def _sync_video_title(output_dir: Path, vid_id: str, old_title: str, new_title: str, log_fn):
     """Rename the video folder and all files inside when a YouTube title has changed."""
@@ -775,6 +873,11 @@ def run_download(job_id: str):
             _running_count = max(0, _running_count - 1)
         _try_start_next()
         _stop_flags.pop(job_id, None)
+        # Update media list for this channel (only scans one channel folder, not all)
+        try:
+            _update_channel_media(output_dir)
+        except Exception:
+            pass
         # Copy refreshed tokens back to the original, then remove temp copy.
         # yt-dlp rotates OAuth tokens during download; discarding the temp file
         # would leave the original with stale tokens that YouTube rejects next time.
@@ -930,6 +1033,21 @@ def delete_job(job_id):
 
 # ── REST: Media browser ───────────────────────────────────────────────────────
 
+def _cached_entry(base: Path, d: Path, files: list,
+                  cache_key: str, mtime: float,
+                  title_override: str | None) -> tuple[dict | None, bool]:
+    """Return (entry, dirty) — dirty=True means cache was written."""
+    with _media_cache_lock:
+        cached = _media_cache.get(cache_key)
+    if cached and cached.get("mtime") == mtime:
+        return cached["entry"], False          # cache hit
+    entry = _make_entry(base, d, files, title_override)
+    if entry:
+        with _media_cache_lock:
+            _media_cache[cache_key] = {"mtime": mtime, "entry": entry}
+    return entry, True                         # cache miss → recomputed
+
+
 def _make_entry(base: Path, d: Path, files: list, title_override: str | None = None) -> dict | None:
     """Build a single result entry from a list of media files in directory d."""
     video_files = sorted([f for f in files if f.suffix.lower() in VIDEO_EXTS])
@@ -1003,8 +1121,16 @@ def scan_videos(folder_filter="", search="", sort_by="date", sort_asc=False):
         if f.is_file() and f.suffix.lower() in VIDEO_EXTS | AUDIO_EXTS:
             dir_files.setdefault(f.parent, []).append(f)
 
-    results = []
+    results   = []
+    seen_keys: set[str] = set()
+    dirty     = False
+
     for d, files in sorted(dir_files.items()):
+        try:
+            dir_mtime = d.stat().st_mtime
+        except OSError:
+            continue
+
         # Group files within the same directory by "clean stem"
         # (strip format-IDs like .f299 so video+audio of same clip count as one)
         stem_groups: dict[str, list[Path]] = {}
@@ -1014,35 +1140,69 @@ def scan_videos(folder_filter="", search="", sort_by="date", sort_asc=False):
 
         if len(stem_groups) == 1:
             # All files belong to one clip (our 3-level structure, or single-file dir)
-            entry = _make_entry(base, d, files)
+            cache_key = str(d.relative_to(base)).replace("\\", "/")
+            seen_keys.add(cache_key)
+            entry, updated = _cached_entry(base, d, files, cache_key, dir_mtime, None)
+            if updated:
+                dirty = True
             if entry:
                 if not search or search.lower() in entry["title"].lower():
                     results.append(entry)
         else:
             # Flat directory: multiple unrelated clips → one entry per unique stem
             for stem, stem_files in stem_groups.items():
-                entry = _make_entry(base, d, stem_files, title_override=stem)
+                cache_key = str(d.relative_to(base)).replace("\\", "/") + "\x00" + stem
+                seen_keys.add(cache_key)
+                try:
+                    stem_mtime = max(f.stat().st_mtime for f in stem_files)
+                except OSError:
+                    stem_mtime = dir_mtime
+                entry, updated = _cached_entry(base, d, stem_files, cache_key, stem_mtime, stem)
+                if updated:
+                    dirty = True
                 if entry:
                     if not search or search.lower() in entry["title"].lower():
                         results.append(entry)
 
-    if sort_by == "name":
-        results.sort(key=lambda x: x["title"].lower(), reverse=not sort_asc)
-    elif sort_by == "date":
-        results.sort(key=lambda x: x["upload_date"] or x["modified"], reverse=not sort_asc)
-    elif sort_by == "size":
-        results.sort(key=lambda x: x["size"], reverse=not sort_asc)
+    # Remove stale cache entries (directories that no longer exist) on full scans
+    if not folder_filter:
+        with _media_cache_lock:
+            stale = [k for k in _media_cache if k not in seen_keys]
+            for k in stale:
+                del _media_cache[k]
+            if stale:
+                dirty = True
+
+    if dirty:
+        _save_media_cache()
+
+    # Update in-memory list on full scans (no filter/search) so /api/media can serve instantly
+    if not folder_filter and not search:
+        with _media_list_lock:
+            _media_list[:] = results
 
     return results
 
 
 @app.route("/api/media", methods=["GET"])
 def list_media():
-    folder   = request.args.get("folder", "")
-    search   = request.args.get("search", "")
-    sort_by  = request.args.get("sort", "date")
-    sort_asc = request.args.get("asc", "false").lower() == "true"
-    return jsonify(scan_videos(folder, search, sort_by, sort_asc))
+    """Return in-memory list instantly. Triggers a full scan only on cold start (no cache)."""
+    with _media_list_lock:
+        has_data = bool(_media_list)
+    if not has_data:
+        scan_videos()   # cold start: build list from disk
+    with _media_list_lock:
+        data = list(_media_list)
+    return jsonify(data)
+
+
+@app.route("/api/media/refresh", methods=["POST"])
+def refresh_media():
+    """Force a full rglob scan, rebuild list and cache, return updated list."""
+    scan_videos()
+    with _media_list_lock:
+        data = list(_media_list)
+    return jsonify(data)
 
 
 @app.route("/api/media/folders", methods=["GET"])
@@ -1147,7 +1307,15 @@ def move_media():
     dest = dest_dir / vid_dir.name
     if dest.exists():
         dest = dest_dir / (vid_dir.name + "_moved")
+    old_dir_rel = str(vid_dir.relative_to(dl)).replace("\\", "/")
     shutil.move(str(vid_dir), str(dest))
+    # Remove old entry; add new entry for the destination
+    _media_list_remove(old_dir_rel)
+    with _media_cache_lock:
+        stale = [k for k in _media_cache if k == old_dir_rel or k.startswith(old_dir_rel + "\x00")]
+        for k in stale:
+            del _media_cache[k]
+    _update_channel_media(dest)
     new_file = dest / src.name
     return jsonify({"ok": True, "new_path": str(new_file.relative_to(dl)).replace("\\", "/")})
 
@@ -1161,8 +1329,16 @@ def delete_media():
     path = get_download_dir() / rel_path.replace("/", os.sep)
     # Delete the entire video directory
     vid_dir = path.parent if path.is_file() else path
+    dl      = get_download_dir()
+    dir_rel = str(vid_dir.relative_to(dl)).replace("\\", "/")
     if vid_dir.exists():
         shutil.rmtree(str(vid_dir))
+    _media_list_remove(dir_rel)
+    with _media_cache_lock:
+        stale = [k for k in _media_cache if k == dir_rel or k.startswith(dir_rel + "\x00")]
+        for k in stale:
+            del _media_cache[k]
+    _save_media_cache()
     return jsonify({"ok": True})
 
 
@@ -1178,9 +1354,16 @@ def rename_media():
     if not path.exists():
         return jsonify({"error": "file not found"}), 404
     # Rename the video directory
-    vid_dir  = path.parent
-    new_dir  = vid_dir.parent / new_name
+    vid_dir     = path.parent
+    old_dir_rel = str(vid_dir.relative_to(dl)).replace("\\", "/")
+    new_dir     = vid_dir.parent / new_name
     vid_dir.rename(new_dir)
+    _media_list_remove(old_dir_rel)
+    with _media_cache_lock:
+        stale = [k for k in _media_cache if k == old_dir_rel or k.startswith(old_dir_rel + "\x00")]
+        for k in stale:
+            del _media_cache[k]
+    _update_channel_media(new_dir)
     new_file = new_dir / path.name
     return jsonify({"ok": True, "new_path": str(new_file.relative_to(dl)).replace("\\", "/")})
 
