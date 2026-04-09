@@ -612,6 +612,7 @@ def run_download(job_id: str):
     min_views = int(filters["min_views"])    if filters.get("min_views")    else None
 
     finished_ids: set = set()
+    _pp_timers:   dict = {}   # vid_id → threading.Timer for debounced per-video upsert
 
     def match_filter(info_dict, *, incomplete=False):
         vid_id = info_dict.get("id", "")
@@ -693,6 +694,34 @@ def run_download(job_id: str):
                     jobs[job_id]["videos"][vid_id]["error_msg"] = err
                     jobs[job_id]["videos"][vid_id]["speed"]     = None
 
+    def on_postprocess(d):
+        """Fires after each yt-dlp postprocessor step (thumbnail, info.json, etc.).
+        Debounced per vid_id: scans the video's folder 3 s after the LAST postprocessor
+        finishes, so _media_list is updated incrementally without a full channel rescan."""
+        if d["status"] != "finished":
+            return
+        info   = d.get("info_dict", {})
+        vid_id = info.get("id", "")
+        title  = info.get("title", "")
+        if not vid_id or not title:
+            return
+        vid_dir = output_dir / sanitize_dirname(title)
+
+        def _do_scan(vd=vid_dir):
+            _pp_timers.pop(vid_id, None)
+            try:
+                _update_channel_media(vd)
+            except Exception:
+                pass
+
+        prev = _pp_timers.pop(vid_id, None)
+        if prev:
+            prev.cancel()
+        t = threading.Timer(3.0, _do_scan)
+        t.daemon = True
+        _pp_timers[vid_id] = t
+        t.start()
+
     quality = filters.get("quality", "best")
     format_map = {
         "best":       "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
@@ -724,6 +753,7 @@ def run_download(job_id: str):
         "ignoreerrors":      True,
         "logger":            MyLogger(),
         "progress_hooks":    [on_progress],
+        "postprocessor_hooks": [on_postprocess],
         "download_archive":  str(output_dir / ".ytdl_archive.txt"),
         "writeinfojson":     True,
         "writethumbnail":    True,

@@ -1384,6 +1384,13 @@ async function loadFolders() {
     if (f === cur) o.selected = true;
     sel.appendChild(o);
   });
+  // If any folder on disk is missing from _allData, silently refresh to pick up new downloads
+  if (_allData.length > 0) {
+    const knownChannels = new Set(_allData.map(f => f.channel));
+    if (fls.some(f => !knownChannels.has(f))) {
+      loadMedia(true);
+    }
+  }
 }
 
 function _applyMediaData(data) {
