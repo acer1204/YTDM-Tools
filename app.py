@@ -2,10 +2,118 @@ import os, json, shutil, threading, uuid, re, time
 from pathlib import Path
 from datetime import datetime
 from difflib import SequenceMatcher
-from flask import Flask, request, jsonify, send_from_directory
+from functools import wraps
+from flask import Flask, request, jsonify, send_from_directory, g
 import yt_dlp
+import psycopg2, psycopg2.extras
+import jwt as pyjwt
+import bcrypt
 
 app = Flask(__name__, static_folder="static")
+
+# ── Auth / DB ─────────────────────────────────────────────────────────────────
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+JWT_SECRET   = os.environ.get("JWT_SECRET", "ytdm-dev-secret-change-me")
+JWT_EXPIRY_S = 7 * 24 * 3600   # 7 days
+AUTH_ENABLED = bool(DATABASE_URL)
+
+def _open_db():
+    return psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+
+def get_db():
+    if not hasattr(g, "_db") or g._db.closed:
+        g._db = _open_db()
+    return g._db
+
+@app.teardown_appcontext
+def _close_db(e=None):
+    db = g.pop("_db", None)
+    if db and not db.closed:
+        db.close()
+
+def _init_db():
+    conn = _open_db()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        id               SERIAL PRIMARY KEY,
+                        username         VARCHAR(64) UNIQUE NOT NULL,
+                        password_hash    TEXT NOT NULL,
+                        is_admin         BOOLEAN DEFAULT FALSE,
+                        can_add_channel  BOOLEAN DEFAULT FALSE,
+                        created_at       TIMESTAMP DEFAULT NOW()
+                    )
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS user_channel_access (
+                        user_id      INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                        channel_name TEXT NOT NULL,
+                        PRIMARY KEY (user_id, channel_name)
+                    )
+                """)
+                admin_pw  = os.environ.get("ADMIN_PASSWORD", "admin123")
+                pw_hash   = bcrypt.hashpw(admin_pw.encode(), bcrypt.gensalt()).decode()
+                cur.execute("""
+                    INSERT INTO users (username, password_hash, is_admin, can_add_channel)
+                    VALUES (%s, %s, TRUE, TRUE)
+                    ON CONFLICT (username) DO NOTHING
+                """, ("admin", pw_hash))
+    finally:
+        conn.close()
+
+if AUTH_ENABLED:
+    try:
+        _init_db()
+        print("[auth] DB ready")
+    except Exception as _auth_err:
+        print(f"[auth] DB init failed: {_auth_err}")
+        AUTH_ENABLED = False
+
+def _make_token(user):
+    return pyjwt.encode({
+        "sub":             user["id"],
+        "username":        user["username"],
+        "is_admin":        user["is_admin"],
+        "can_add_channel": user["can_add_channel"],
+        "exp":             int(time.time()) + JWT_EXPIRY_S,
+    }, JWT_SECRET, algorithm="HS256")
+
+def _decode_token(token):
+    return pyjwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+
+def _current_user():
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None
+    try:
+        return _decode_token(auth[7:])
+    except Exception:
+        return None
+
+@app.before_request
+def _auth_gate():
+    # Always public
+    if request.path == "/" or request.path.startswith("/static/") or request.path.startswith("/dl/"):
+        return
+    if request.path == "/api/auth/login":
+        return
+    if not AUTH_ENABLED:
+        g.user = {"sub": 0, "username": "admin", "is_admin": True, "can_add_channel": True}
+        return
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+    g.user = user
+
+def require_admin(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if not g.get("user", {}).get("is_admin"):
+            return jsonify({"error": "forbidden"}), 403
+        return f(*args, **kwargs)
+    return wrapper
 
 DATA_DIR      = Path(os.environ.get("DATA_DIR", "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -937,6 +1045,9 @@ def list_jobs():
 
 @app.route("/api/jobs", methods=["POST"])
 def create_job():
+    user = g.get("user", {})
+    if not user.get("is_admin") and not user.get("can_add_channel"):
+        return jsonify({"error": "forbidden"}), 403
     data = request.json or {}
     url  = (data.get("url") or "").strip()
     if not url:
@@ -1220,13 +1331,21 @@ def list_media():
     with _media_list_lock:
         has_data = bool(_media_list)
     if not has_data:
-        scan_videos()   # cold start: build list from disk
+        scan_videos()
     with _media_list_lock:
         data = list(_media_list)
+    user = g.get("user", {})
+    if not user.get("is_admin") and AUTH_ENABLED:
+        db = get_db()
+        with db.cursor() as cur:
+            cur.execute("SELECT channel_name FROM user_channel_access WHERE user_id = %s", (user["sub"],))
+            allowed = {r["channel_name"] for r in cur.fetchall()}
+        data = [e for e in data if e.get("channel") in allowed]
     return jsonify(data)
 
 
 @app.route("/api/media/refresh", methods=["POST"])
+@require_admin
 def refresh_media():
     """Force a full rglob scan, rebuild list and cache, return updated list."""
     scan_videos()
@@ -1237,7 +1356,14 @@ def refresh_media():
 
 @app.route("/api/media/folders", methods=["GET"])
 def list_folders():
+    user = g.get("user", {})
     folders = [d.name for d in sorted(get_download_dir().iterdir()) if d.is_dir()]
+    if not user.get("is_admin") and AUTH_ENABLED:
+        db = get_db()
+        with db.cursor() as cur:
+            cur.execute("SELECT channel_name FROM user_channel_access WHERE user_id = %s", (user["sub"],))
+            allowed = {r["channel_name"] for r in cur.fetchall()}
+        folders = [f for f in folders if f in allowed]
     return jsonify(folders)
 
 
@@ -1499,6 +1625,135 @@ def update_settings():
 @app.route("/dl/<path:filepath>")
 def serve_dl(filepath):
     return send_from_directory(str(get_download_dir().absolute()), filepath)
+
+
+# ── Auth routes ───────────────────────────────────────────────────────────────
+
+@app.route("/api/auth/login", methods=["POST"])
+def auth_login():
+    if not AUTH_ENABLED:
+        return jsonify({"error": "auth disabled"}), 503
+    data     = request.get_json() or {}
+    username = (data.get("username") or "").strip()
+    password =  data.get("password") or ""
+    if not username or not password:
+        return jsonify({"error": "missing fields"}), 400
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM users WHERE username = %s", (username,))
+        user = cur.fetchone()
+    if not user or not bcrypt.checkpw(password.encode(), user["password_hash"].encode()):
+        return jsonify({"error": "帳號或密碼錯誤"}), 401
+    return jsonify({
+        "token": _make_token(user),
+        "user": {
+            "id":              user["id"],
+            "username":        user["username"],
+            "is_admin":        user["is_admin"],
+            "can_add_channel": user["can_add_channel"],
+        }
+    })
+
+
+@app.route("/api/auth/me", methods=["GET"])
+def auth_me():
+    return jsonify(g.user)
+
+
+# ── User management routes (admin only) ───────────────────────────────────────
+
+@app.route("/api/users", methods=["GET"])
+@require_admin
+def list_users():
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute("SELECT id, username, is_admin, can_add_channel, created_at FROM users ORDER BY id")
+        rows = cur.fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/users", methods=["POST"])
+@require_admin
+def create_user():
+    data            = request.get_json() or {}
+    username        = (data.get("username") or "").strip()
+    password        =  data.get("password") or ""
+    is_admin        = bool(data.get("is_admin", False))
+    can_add_channel = bool(data.get("can_add_channel", False))
+    if not username or not password:
+        return jsonify({"error": "missing fields"}), 400
+    pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute(
+                "INSERT INTO users (username, password_hash, is_admin, can_add_channel) VALUES (%s,%s,%s,%s) RETURNING id",
+                (username, pw_hash, is_admin, can_add_channel)
+            )
+            new_id = cur.fetchone()["id"]
+        db.commit()
+        return jsonify({"id": new_id}), 201
+    except psycopg2.errors.UniqueViolation:
+        db.rollback()
+        return jsonify({"error": "帳號已存在"}), 409
+
+
+@app.route("/api/users/<int:uid>", methods=["PATCH"])
+@require_admin
+def update_user(uid):
+    data = request.get_json() or {}
+    db   = get_db()
+    with db.cursor() as cur:
+        if data.get("password"):
+            pw_hash = bcrypt.hashpw(data["password"].encode(), bcrypt.gensalt()).decode()
+            cur.execute("UPDATE users SET password_hash=%s WHERE id=%s", (pw_hash, uid))
+        if "is_admin" in data:
+            cur.execute("UPDATE users SET is_admin=%s WHERE id=%s", (bool(data["is_admin"]), uid))
+        if "can_add_channel" in data:
+            cur.execute("UPDATE users SET can_add_channel=%s WHERE id=%s", (bool(data["can_add_channel"]), uid))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/users/<int:uid>", methods=["DELETE"])
+@require_admin
+def delete_user(uid):
+    if uid == g.user.get("sub"):
+        return jsonify({"error": "無法刪除自己"}), 400
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM users WHERE id=%s", (uid,))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/users/<int:uid>/channels", methods=["GET"])
+@require_admin
+def get_user_channels(uid):
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute("SELECT channel_name FROM user_channel_access WHERE user_id=%s ORDER BY channel_name", (uid,))
+        channels = [r["channel_name"] for r in cur.fetchall()]
+    return jsonify(channels)
+
+
+@app.route("/api/users/<int:uid>/channels", methods=["PUT"])
+@require_admin
+def set_user_channels(uid):
+    channels = request.get_json()
+    if not isinstance(channels, list):
+        return jsonify({"error": "expected list"}), 400
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM user_channel_access WHERE user_id=%s", (uid,))
+        for ch in channels:
+            if ch:
+                cur.execute(
+                    "INSERT INTO user_channel_access (user_id, channel_name) VALUES (%s,%s) ON CONFLICT DO NOTHING",
+                    (uid, ch)
+                )
+    db.commit()
+    return jsonify({"ok": True})
 
 
 if __name__ == "__main__":

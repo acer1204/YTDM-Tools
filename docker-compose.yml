@@ -7,7 +7,41 @@ services:
       - "7321:5000"
     volumes:
       - D:/YTDownload/downloads:/app/downloads   # 影片下載路徑
-      - D:/YTDownload/data:/app/data                        # settings.json / jobs.json / cookies
+      - D:/YTDownload/data:/app/data             # settings.json / jobs.json / cookies
     environment:
       - DOWNLOAD_DIR=/app/downloads
       - DATA_DIR=/app/data
+      - DATABASE_URL=postgresql://ytdm:ytdm@postgres:5432/ytdm
+      - JWT_SECRET=change-me-in-production
+      - ADMIN_PASSWORD=admin123
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: YTDM-Postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ytdm
+      POSTGRES_PASSWORD: ytdm
+      POSTGRES_DB: ytdm
+    volumes:
+      - D:/YTDownload/pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ytdm"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: YTDM-pgAdmin
+    restart: unless-stopped
+    ports:
+      - "5055:80"
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@ytdm.com
+      PGADMIN_DEFAULT_PASSWORD: admin
+    depends_on:
+      - postgres
