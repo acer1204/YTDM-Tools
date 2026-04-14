@@ -44,7 +44,7 @@ body {
 /* ── Form elements ── */
 label { display: block; font-size: .8rem; color: #888; margin-bottom: 5px; margin-top: 14px; }
 label:first-child { margin-top: 0; }
-input[type=text], input[type=number], input[type=search], select {
+input[type=text], input[type=number], input[type=search], input[type=password], select {
   width: 100%; background: #0d0d12; border: 1px solid #252535;
   border-radius: 9px; color: #e2e2e2; padding: 9px 13px;
   font-size: .9rem; outline: none; transition: border-color .2s;
@@ -477,11 +477,14 @@ input:focus, select:focus { border-color: #7c6dfa; }
   border-bottom: 1px solid #1e1e2e; }
 .user-table td { padding: 10px 12px; border-bottom: 1px solid #1a1a28; vertical-align: middle; }
 .user-table tr:last-child td { border-bottom: none; }
+.user-table th:nth-child(2), .user-table th:nth-child(3),
+.user-table td:nth-child(2), .user-table td:nth-child(3) { text-align: center; }
 .badge-on  { background: #1a3a1a; color: #4caf50; border-radius: 6px; padding: 2px 8px; font-size: .75rem; }
 .badge-off { background: #2a1a1a; color: #888;    border-radius: 6px; padding: 2px 8px; font-size: .75rem; }
 .ch-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 180px; overflow-y: auto; }
 .ch-chip { display: flex; align-items: center; gap: 6px; background: #1a1a2e;
-  border: 1px solid #2a2a4a; border-radius: 8px; padding: 4px 10px; font-size: .8rem; }
+  border: 1px solid #2a2a4a; border-radius: 8px; padding: 4px 10px; font-size: .8rem;
+  margin: 0; height: 32px; }
 .ch-chip input[type=checkbox] { accent-color: #7c6dfa; }
 </style>
 </head>
@@ -671,7 +674,7 @@ input:focus, select:focus { border-color: #7c6dfa; }
 <div class="settings-grid">
 
   <!-- Download Settings -->
-  <div class="card">
+  <div class="card" id="card-admin-download">
     <div class="section-title" data-i18n="s_download_title">Download Settings</div>
 
     <label data-i18n="s_path_label">Video Storage Path</label>
@@ -709,7 +712,7 @@ input:focus, select:focus { border-color: #7c6dfa; }
   </div>
 
   <!-- Scheduled Trigger -->
-  <div class="card" id="scheduleCard">
+  <div class="card" id="scheduleCard" data-admin-only>
     <div class="section-title" data-i18n="s_schedule_title">Scheduled Trigger</div>
     <div id="scheduleDisabledHint" style="font-size:.82rem;color:#888;margin-top:6px;display:none" data-i18n="s_schedule_disabled">
       Set Max Concurrent Channels to exactly 1 to enable scheduled triggers.
@@ -743,7 +746,7 @@ input:focus, select:focus { border-color: #7c6dfa; }
   </div>
 
   <!-- Update Check Mode -->
-  <div class="card">
+  <div class="card" id="card-admin-checkmode">
     <div class="section-title" data-i18n="s_check_mode_title">Update Check Mode</div>
 
     <div style="display:flex;flex-direction:column;gap:14px;margin-top:8px">
@@ -785,6 +788,22 @@ input:focus, select:focus { border-color: #7c6dfa; }
     <div style="margin-top:18px;display:flex;gap:10px;align-items:center">
       <button class="btn btn-primary" onclick="saveCheckMode()" data-i18n="s_save_check">Save</button>
       <span id="checkModeSaveMsg" style="font-size:.82rem;color:#3ddc84;display:none" data-i18n="s_check_saved">✓ Saved</span>
+    </div>
+  </div>
+
+  <!-- Subtitle Download Languages (admin only) -->
+  <div class="card" id="card-admin-subtitle">
+    <div class="section-title" data-i18n="s_subtitle_langs_title">Subtitle Download Languages</div>
+    <div style="font-size:.82rem;color:#666;margin-top:4px" data-i18n="s_subtitle_langs_hint">Manual subtitles in these languages will be downloaded (auto-generated subtitles are excluded)</div>
+    <div id="subtitleLangChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px"></div>
+    <div style="display:flex;gap:8px;margin-top:10px;align-items:center">
+      <input type="text" id="subtitleLangInput" placeholder="e.g. ko, fr" style="width:120px"
+        onkeydown="if(event.key==='Enter')addSubtitleLang()">
+      <button class="btn btn-ghost btn-sm" onclick="addSubtitleLang()" data-i18n="s_subtitle_lang_add">Add</button>
+    </div>
+    <div style="margin-top:16px;display:flex;gap:10px;align-items:center">
+      <button class="btn btn-primary" onclick="saveSubtitleLangs()" data-i18n="s_subtitle_lang_save">Save</button>
+      <span id="subtitleLangSaveMsg" style="font-size:.82rem;color:#3ddc84;display:none" data-i18n="s_subtitle_lang_saved">✓ Saved</span>
     </div>
   </div>
 
@@ -835,14 +854,20 @@ input:focus, select:focus { border-color: #7c6dfa; }
       <span id="fpVolumeLbl" style="font-size:.82rem;color:#888;min-width:36px">20%</span>
     </div>
 
+    <div style="margin-top:16px">
+      <label style="font-size:.82rem;color:#888;display:block;margin-bottom:6px" data-i18n="s_subtitle_priority">Subtitle Language Priority</label>
+      <div id="subtitlePriorityList" style="display:flex;flex-direction:column;gap:4px"></div>
+      <div style="font-size:.75rem;color:#555;margin-top:4px" data-i18n="s_subtitle_priority_hint">First available language is auto-selected when playing</div>
+    </div>
+
     <div style="margin-top:18px;display:flex;gap:10px;align-items:center">
       <button class="btn btn-primary" onclick="savePlayerSettings()" data-i18n="s_save_player">Save</button>
       <span id="fpSettingsSaveMsg" style="font-size:.82rem;color:#3ddc84;display:none" data-i18n="s_fp_saved">✓ Saved</span>
     </div>
   </div>
 
-  <!-- Usage Notes (full width) -->
-  <div class="card sg-full">
+  <!-- Usage Notes (admin only, full width) -->
+  <div class="card sg-full" id="card-admin-usage">
     <div class="section-title" data-i18n="s_usage_title">Usage Notes</div>
     <div style="font-size:.83rem;color:#666;line-height:1.8">
       <p data-i18n-html="s_usage_1">• Path can be absolute (recommended), e.g. <code style="color:#aaa">D:\YTVideos</code></p>
@@ -884,14 +909,6 @@ input:focus, select:focus { border-color: #7c6dfa; }
         <label>密碼</label>
         <input type="password" id="newPassword" placeholder="登入密碼">
       </div>
-    </div>
-    <div style="display:flex;gap:20px;margin-top:14px">
-      <label style="display:flex;align-items:center;gap:8px;color:#ccc;font-size:.88rem;cursor:pointer">
-        <input type="checkbox" id="newIsAdmin" style="width:auto;accent-color:#7c6dfa"> 管理員
-      </label>
-      <label style="display:flex;align-items:center;gap:8px;color:#ccc;font-size:.88rem;cursor:pointer">
-        <input type="checkbox" id="newCanAdd" style="width:auto;accent-color:#7c6dfa"> 可新增頻道
-      </label>
     </div>
     <div style="margin-top:14px;display:flex;gap:10px;align-items:center">
       <button class="btn btn-primary" onclick="createUser()">新增</button>
@@ -1040,7 +1057,13 @@ async function apiFetch(url, opts = {}) {
   opts.headers = opts.headers || {};
   if (token) opts.headers["Authorization"] = "Bearer " + token;
   const r = await fetch(url, opts);
-  if (r.status === 401) { _showLogin(); throw new Error("401"); }
+  if (r.status === 401) {
+    // Use the `token` captured at request-start, not _getToken() re-read now.
+    // If token was null when we sent the request (pre-login call), don't clear
+    // a valid token that may have been stored while the request was in-flight.
+    if (token) { _clearToken(); _showLogin(); }
+    throw new Error("401");
+  }
   return r;
 }
 
@@ -1049,6 +1072,36 @@ function _showLogin() {
 }
 function _hideLogin() {
   document.getElementById("loginOverlay").style.display = "none";
+}
+
+async function _loadUserSettings() {
+  try {
+    const r = await apiFetch("/api/auth/settings");
+    const s = await r.json();
+    if (s.lang)      await loadLang(s.lang, true);   // true = skip API save (already from DB)
+    if (s.fpMode !== undefined || s.fpMute !== undefined ||
+        s.fpVolume !== undefined || s.fpEnabled !== undefined) {
+      if (s.fpMode    !== undefined) localStorage.setItem("fpMode",    s.fpMode);
+      if (s.fpMute    !== undefined) localStorage.setItem("fpMute",    s.fpMute);
+      if (s.fpVolume  !== undefined) localStorage.setItem("fpVolume",  s.fpVolume);
+      if (s.fpEnabled !== undefined) localStorage.setItem("fpEnabled", s.fpEnabled);
+      loadPlayerSettings();
+    }
+    if (s.subtitlePriority && Array.isArray(s.subtitlePriority)) {
+      localStorage.setItem("subtitlePriority", JSON.stringify(s.subtitlePriority));
+      _buildSubtitlePriorityList();
+    }
+  } catch {}
+}
+
+async function _saveUserSettings(patch) {
+  try {
+    await apiFetch("/api/auth/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch)
+    });
+  } catch {}
 }
 
 async function doLogin() {
@@ -1066,6 +1119,7 @@ async function doLogin() {
     if (!r.ok) { errEl.textContent = data.error || "登入失敗"; errEl.style.display = "block"; return; }
     _setToken(data.token);
     _authUser = data.user;
+    await _loadUserSettings();
     _hideLogin();
     _applyPermissions();
   } catch { errEl.textContent = "連線失敗"; errEl.style.display = "block"; }
@@ -1081,12 +1135,25 @@ function _applyPermissions() {
   if (!_authUser) return;
   const isAdmin = _authUser.is_admin;
   const canAdd  = _authUser.can_add_channel;
+
+  // Tab visibility
   document.getElementById("tab-add").style.display      = (isAdmin || canAdd) ? "" : "none";
-  document.getElementById("tab-settings").style.display = isAdmin ? "" : "none";
+  document.getElementById("tab-queue").style.display    = (isAdmin || canAdd) ? "" : "none";
   document.getElementById("tab-similar").style.display  = isAdmin ? "" : "none";
   document.getElementById("tab-users").style.display    = isAdmin ? "" : "none";
-  document.getElementById("navUser").textContent        = _authUser.username;
-  if (!isAdmin && !canAdd) nav("queue");
+  document.getElementById("tab-settings").style.display = ""; // visible to all
+
+  // Admin-only settings cards
+  const adminOnly = ["card-admin-download", "scheduleCard", "card-admin-checkmode", "card-admin-subtitle", "card-admin-usage"];
+  adminOnly.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = isAdmin ? "" : "none";
+  });
+
+  document.getElementById("navUser").textContent = _authUser.username;
+
+  // Default landing page
+  if (!isAdmin && !canAdd) nav("media");
 }
 
 async function _checkAuth() {
@@ -1096,6 +1163,7 @@ async function _checkAuth() {
     const r = await apiFetch("/api/auth/me", { headers: { Authorization: "Bearer " + token } });
     if (!r.ok) { _showLogin(); return; }
     _authUser = await r.json();
+    await _loadUserSettings();
     _hideLogin();
     _applyPermissions();
   } catch { _showLogin(); }
@@ -1632,7 +1700,13 @@ async function refreshMedia() {
   loading.style.display = "block";
   try {
     const res = await apiFetch("/api/media/refresh", { method: "POST" });
-    _allData  = await res.json();
+    if (res.ok) {
+      _allData = await res.json();
+    } else {
+      // Non-admin cannot trigger a rescan; re-fetch filtered cache instead
+      const r2 = await apiFetch("/api/media");
+      _allData = await r2.json();
+    }
     await loadFolders();
   } catch {}
   loading.style.display = "none";
@@ -1706,7 +1780,7 @@ function createTile(f) {
     video.style.display = "none";
     if (img) img.style.display = "block";
   });
-  tile.addEventListener("click", () => openFloatPlayer(f.rel_path, f.title, isAudio));
+  tile.addEventListener("click", () => openFloatPlayer(f.rel_path, f.title, isAudio, f.subtitles || {}));
 
   return tile;
 }
@@ -1722,12 +1796,27 @@ function formatDate(d) {
 
 let fpZTop = 900;
 
-function openFullscreenPlayer(relPath, title) {
+function openFullscreenPlayer(relPath, title, subtitles = {}) {
   const overlay = document.getElementById("fsoOverlay");
   const video   = document.getElementById("fso-video");
   const muted   = localStorage.getItem("fpMute") === "1";
   const vol     = parseFloat(localStorage.getItem("fpVolume") ?? "20") / 100;
   document.getElementById("fso-title").textContent = title;
+  // Reset src before manipulating tracks
+  video.src = "";
+  video.querySelectorAll("track").forEach(t => t.remove());
+  // Add subtitle tracks in priority order
+  const priority = JSON.parse(localStorage.getItem("subtitlePriority") || '["zh-Hant","zh-Hans","en","ja"]');
+  let defSet = false;
+  priority.forEach(lang => {
+    if (subtitles && subtitles[lang]) {
+      const tr = document.createElement("track");
+      tr.kind = "subtitles"; tr.src = dlUrl(subtitles[lang]);
+      tr.srclang = lang; tr.label = lang;
+      if (!defSet) { tr.default = true; defSet = true; }
+      video.appendChild(tr);
+    }
+  });
   video.src     = dlUrl(relPath);
   video.muted   = muted;
   video.volume  = vol;
@@ -1758,10 +1847,10 @@ function fsoKeyHandler(e) {
   if (e.key === "Escape") fsoClose();
 }
 
-function openFloatPlayer(relPath, title, isAudio) {
+function openFloatPlayer(relPath, title, isAudio, subtitles = {}) {
   // Floating player disabled → use fullscreen overlay instead
   if (localStorage.getItem("fpEnabled") !== "1") {
-    openFullscreenPlayer(relPath, title);
+    openFullscreenPlayer(relPath, title, subtitles);
     return;
   }
   // Single mode: close all existing players first
@@ -1773,6 +1862,14 @@ function openFloatPlayer(relPath, title, isAudio) {
   const offset = document.querySelectorAll(".float-player").length * 36;
   const muted  = localStorage.getItem("fpMute") === "1";
   const vol    = parseFloat(localStorage.getItem("fpVolume") ?? "20") / 100;
+
+  // Build subtitle tracks in user priority order
+  const _subPriority = JSON.parse(localStorage.getItem("subtitlePriority") || '["zh-Hant","zh-Hans","en","ja"]');
+  let _defSet = false;
+  const trackHtml = _subPriority.filter(lang => subtitles && subtitles[lang]).map(lang => {
+    const def = !_defSet ? (_defSet = true, ' default') : '';
+    return `<track kind="subtitles" src="${dlUrl(subtitles[lang])}" srclang="${lang}" label="${lang}"${def}>`;
+  }).join('');
 
   const win = document.createElement("div");
   win.className = "float-player";
@@ -1787,7 +1884,7 @@ function openFloatPlayer(relPath, title, isAudio) {
       <button class="fp-btn fp-close" title="關閉" onclick="fpClose(this.closest('.float-player'))">✕</button>
     </div>
     <div class="fp-body">
-      <video src="${src}" controls autoplay playsinline${muted ? " muted" : ""}></video>
+      <video src="${src}" controls autoplay playsinline${muted ? " muted" : ""}>${trackHtml}</video>
     </div>
     <div class="fp-resize">⤡</div>`;
 
@@ -2112,6 +2209,8 @@ async function loadSettings() {
   if (radio) radio.checked = true;
   document.getElementById("recentCountInput").value = data.recent_count || 50;
   document.getElementById("recentCountRow").style.display = mode === "recent" ? "flex" : "none";
+  _subtitleLangs = data.subtitle_langs || ["zh-Hant", "zh-Hans", "en", "ja"];
+  _buildSubtitleLangChips();
 }
 
 async function saveCheckMode() {
@@ -2210,6 +2309,7 @@ function loadPlayerSettings() {
   document.getElementById("fpVolumeLbl").textContent = vol + "%";
   document.getElementById("fpEnabled").checked = enabled;
   _updateFpPlayMode(enabled);
+  _buildSubtitlePriorityList();
 }
 
 function _updateFpPlayMode(enabled) {
@@ -2219,17 +2319,93 @@ function _updateFpPlayMode(enabled) {
 }
 
 function savePlayerSettings() {
-  const mode    = document.querySelector('input[name=fpMode]:checked')?.value || "multi";
-  const mute    = document.getElementById("fpMuteDefault").checked;
-  const vol     = document.getElementById("fpVolumeDefault").value;
-  const enabled = document.getElementById("fpEnabled").checked;
+  const mode     = document.querySelector('input[name=fpMode]:checked')?.value || "multi";
+  const mute     = document.getElementById("fpMuteDefault").checked ? "1" : "0";
+  const vol      = document.getElementById("fpVolumeDefault").value;
+  const enabled  = document.getElementById("fpEnabled").checked ? "1" : "0";
+  const priority = JSON.parse(localStorage.getItem("subtitlePriority") || '["zh-Hant","zh-Hans","en","ja"]');
   localStorage.setItem("fpMode",    mode);
-  localStorage.setItem("fpMute",    mute    ? "1" : "0");
+  localStorage.setItem("fpMute",    mute);
   localStorage.setItem("fpVolume",  vol);
-  localStorage.setItem("fpEnabled", enabled ? "1" : "0");
+  localStorage.setItem("fpEnabled", enabled);
+  _saveUserSettings({ fpMode: mode, fpMute: mute, fpVolume: vol, fpEnabled: enabled, subtitlePriority: priority });
   const msg = document.getElementById("fpSettingsSaveMsg");
   msg.style.display = "inline";
   setTimeout(() => { msg.style.display = "none"; }, 2500);
+}
+
+// ══════════════════════════════════════════════════════════
+// Subtitle Language Settings
+// ══════════════════════════════════════════════════════════
+
+let _subtitleLangs = ["zh-Hant", "zh-Hans", "en", "ja"];
+
+function _buildSubtitleLangChips() {
+  const container = document.getElementById("subtitleLangChips");
+  if (!container) return;
+  container.innerHTML = "";
+  _subtitleLangs.forEach((lang, i) => {
+    const chip = document.createElement("span");
+    chip.className = "ch-chip";
+    chip.style.display = "inline-flex";
+    chip.style.alignItems = "center";
+    chip.style.gap = "4px";
+    chip.innerHTML = `${esc(lang)}<button onclick="_removeSubtitleLang(${i})"
+      style="background:none;border:none;color:#f08080;cursor:pointer;padding:0 2px;font-size:.85rem;line-height:1">✕</button>`;
+    container.appendChild(chip);
+  });
+}
+
+function _removeSubtitleLang(i) {
+  _subtitleLangs.splice(i, 1);
+  _buildSubtitleLangChips();
+}
+
+function addSubtitleLang() {
+  const input = document.getElementById("subtitleLangInput");
+  const vals = input.value.split(",").map(s => s.trim()).filter(s => s && !_subtitleLangs.includes(s));
+  _subtitleLangs.push(...vals);
+  input.value = "";
+  _buildSubtitleLangChips();
+}
+
+async function saveSubtitleLangs() {
+  const dir = document.getElementById("settingDownloadDir").value.trim()
+            || (document.getElementById("currentDownloadDir").textContent || "").trim();
+  if (!dir || dir === t("s_not_set")) return;
+  await apiFetch("/api/settings", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ download_dir: dir, subtitle_langs: _subtitleLangs })
+  });
+  const msg = document.getElementById("subtitleLangSaveMsg");
+  msg.style.display = "inline";
+  setTimeout(() => { msg.style.display = "none"; }, 2500);
+}
+
+function _buildSubtitlePriorityList() {
+  const list = document.getElementById("subtitlePriorityList");
+  if (!list) return;
+  const priority = JSON.parse(localStorage.getItem("subtitlePriority") || '["zh-Hant","zh-Hans","en","ja"]');
+  list.innerHTML = "";
+  priority.forEach((lang, i) => {
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;align-items:center;gap:6px";
+    row.innerHTML = `
+      <span style="flex:1;font-size:.85rem;color:#ccc;background:#1e1e2e;border:1px solid #2d2d3f;border-radius:6px;padding:4px 10px">${esc(lang)}</span>
+      <button class="btn btn-ghost btn-sm" style="padding:2px 7px;min-width:28px" onclick="_subtitlePriorityMove(${i},-1)"${i===0?' disabled':''}>↑</button>
+      <button class="btn btn-ghost btn-sm" style="padding:2px 7px;min-width:28px" onclick="_subtitlePriorityMove(${i},1)"${i===priority.length-1?' disabled':''}>↓</button>`;
+    list.appendChild(row);
+  });
+}
+
+function _subtitlePriorityMove(i, dir) {
+  const priority = JSON.parse(localStorage.getItem("subtitlePriority") || '["zh-Hant","zh-Hans","en","ja"]');
+  const j = i + dir;
+  if (j < 0 || j >= priority.length) return;
+  [priority[i], priority[j]] = [priority[j], priority[i]];
+  localStorage.setItem("subtitlePriority", JSON.stringify(priority));
+  _buildSubtitlePriorityList();
 }
 
 // ══════════════════════════════════════════════════════════
@@ -2245,7 +2421,7 @@ function t(key, ...args) {
   return s;
 }
 
-async function loadLang(code) {
+async function loadLang(code, skipSave = false) {
   try {
     const res = await fetch(`/static/lang/${code}.json`);
     if (!res.ok) throw new Error("not found");
@@ -2257,6 +2433,7 @@ async function loadLang(code) {
   localStorage.setItem('lang', code);
   document.documentElement.lang = code;
   applyLang();
+  if (!skipSave) _saveUserSettings({ lang: code });
 }
 
 function applyLang() {
@@ -2342,23 +2519,19 @@ async function editUserPerms(uid, username, isAdmin, canAdd) {
 }
 
 async function createUser() {
-  const username        = document.getElementById("newUsername").value.trim();
-  const password        = document.getElementById("newPassword").value;
-  const is_admin        = document.getElementById("newIsAdmin").checked;
-  const can_add_channel = document.getElementById("newCanAdd").checked;
-  const msg             = document.getElementById("newUserMsg");
+  const username = document.getElementById("newUsername").value.trim();
+  const password = document.getElementById("newPassword").value;
+  const msg      = document.getElementById("newUserMsg");
   if (!username || !password) { msg.textContent = "帳號和密碼不可空白"; msg.style.color="#f44"; msg.style.display="block"; return; }
   const r = await apiFetch("/api/users", { method: "POST",
     headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({ username, password, is_admin, can_add_channel })
+    body: JSON.stringify({ username, password })
   });
   const data = await r.json();
   if (!r.ok) { msg.textContent = data.error || "新增失敗"; msg.style.color="#f44"; msg.style.display="block"; return; }
   msg.textContent = "✓ 新增成功"; msg.style.color="#3ddc84"; msg.style.display="block";
   document.getElementById("newUsername").value = "";
   document.getElementById("newPassword").value = "";
-  document.getElementById("newIsAdmin").checked = false;
-  document.getElementById("newCanAdd").checked  = false;
   setTimeout(() => msg.style.display="none", 2000);
   loadUsers();
 }
@@ -2406,10 +2579,10 @@ async function saveUserChannels() {
 
 (async () => {
   const saved = localStorage.getItem('lang') || 'en';
-  await loadLang(saved);
-  loadCookieOpts();
+  await loadLang(saved, true);   // skipSave — no token yet
   loadPlayerSettings();
-  await _checkAuth();
+  await _checkAuth();   // auth first — confirms token before any API calls
+  loadCookieOpts();     // safe to call now (token is set)
 })();
 </script>
 </body>

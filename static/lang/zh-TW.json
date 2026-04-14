@@ -155,6 +155,14 @@
   "s_path_empty": "路徑不能為空",
   "s_clipboard_error": "無法讀取剪貼簿，請手動貼上",
 
+  "s_subtitle_langs_title": "字幕下載語系",
+  "s_subtitle_langs_hint": "下載時會自動取得這些語系的手動字幕（不包含自動生成字幕）",
+  "s_subtitle_lang_add": "新增",
+  "s_subtitle_lang_save": "儲存",
+  "s_subtitle_lang_saved": "✓ 已儲存",
+  "s_subtitle_priority": "字幕語系優先順序",
+  "s_subtitle_priority_hint": "播放時自動選取第一個有字幕的語系",
+
   "ck_modal_title": "Cookies 管理",
   "ck_modal_hint": "使用瀏覽器擴充套件「Get cookies.txt LOCALLY」在 YouTube 頁面匯出 cookies，上傳後可下載需要年齡驗證或會員專屬的影片。",
   "ck_upload_new": "上傳新檔案",

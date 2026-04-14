@@ -12,7 +12,7 @@ services:
       - DOWNLOAD_DIR=/app/downloads
       - DATA_DIR=/app/data
       - DATABASE_URL=postgresql://ytdm:ytdm@postgres:5432/ytdm
-      - JWT_SECRET=change-me-in-production
+      - JWT_SECRET=870cecd12a5378fb6e01c30cba8cfa460c0ac5a26c11140fc68ee3e034ffa345
       - ADMIN_PASSWORD=admin123
     depends_on:
       postgres:
