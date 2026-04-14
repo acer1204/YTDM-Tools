@@ -44,7 +44,7 @@ body {
 /* ── Form elements ── */
 label { display: block; font-size: .8rem; color: #888; margin-bottom: 5px; margin-top: 14px; }
 label:first-child { margin-top: 0; }
-input[type=text], input[type=number], input[type=search], select {
+input[type=text], input[type=number], input[type=search], input[type=password], select {
   width: 100%; background: #0d0d12; border: 1px solid #252535;
   border-radius: 9px; color: #e2e2e2; padding: 9px 13px;
   font-size: .9rem; outline: none; transition: border-color .2s;
@@ -452,9 +452,57 @@ input:focus, select:focus { border-color: #7c6dfa; }
 }
 .lang-btns { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px; }
 .lang-btn-active { background: #7c6dfa !important; color: #fff !important; border-color: #7c6dfa !important; }
+
+/* ═══════════ Login overlay ═══════════ */
+.login-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.85);
+  display: flex; align-items: center; justify-content: center; z-index: 9999;
+}
+.login-box {
+  background: #16161f; border: 1px solid #2a2a3e; border-radius: 18px;
+  padding: 40px 36px; width: 340px; display: flex; flex-direction: column; gap: 14px;
+}
+.login-title { font-size: 1.4rem; font-weight: 800; color: #fff; text-align: center; }
+.login-sub   { font-size: .82rem; color: #666; text-align: center; margin-top: -6px; }
+.login-err   { color: #f44; font-size: .8rem; text-align: center; display: none; }
+
+/* ═══════════ Nav right (user info) ═══════════ */
+.nav-right { margin-left: auto; display: flex; align-items: center; gap: 10px; }
+.nav-user  { font-size: .8rem; color: #666; }
+
+/* ═══════════ PAGE 6: User management ═══════════ */
+.user-table { width: 100%; border-collapse: collapse; font-size: .875rem; }
+.user-table th { text-align: left; color: #555; font-size: .75rem; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .06em; padding: 8px 12px;
+  border-bottom: 1px solid #1e1e2e; }
+.user-table td { padding: 10px 12px; border-bottom: 1px solid #1a1a28; vertical-align: middle; }
+.user-table tr:last-child td { border-bottom: none; }
+.user-table th:nth-child(2), .user-table th:nth-child(3),
+.user-table td:nth-child(2), .user-table td:nth-child(3) { text-align: center; }
+.badge-on  { background: #1a3a1a; color: #4caf50; border-radius: 6px; padding: 2px 8px; font-size: .75rem; }
+.badge-off { background: #2a1a1a; color: #888;    border-radius: 6px; padding: 2px 8px; font-size: .75rem; }
+.ch-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 180px; overflow-y: auto; }
+.ch-chip { display: flex; align-items: center; gap: 6px; background: #1a1a2e;
+  border: 1px solid #2a2a4a; border-radius: 8px; padding: 4px 10px; font-size: .8rem;
+  margin: 0; height: 32px; }
+.ch-chip input[type=checkbox] { accent-color: #7c6dfa; }
 </style>
 </head>
 <body>
+
+<!-- ── Login overlay ── -->
+<div id="loginOverlay" class="login-overlay">
+  <div class="login-box">
+    <div class="login-title">▶ YTDLoader</div>
+    <div class="login-sub">請登入以繼續</div>
+    <input id="loginUser" type="text"     placeholder="帳號" style="margin-top:6px"
+           onkeydown="if(event.key==='Enter')doLogin()">
+    <input id="loginPass" type="password" placeholder="密碼"
+           onkeydown="if(event.key==='Enter')doLogin()">
+    <button class="btn btn-primary" onclick="doLogin()" style="width:100%;margin-top:4px">登入</button>
+    <div id="loginErr" class="login-err"></div>
+  </div>
+</div>
 
 <!-- ── Navigation ── -->
 <nav class="nav">
@@ -464,6 +512,11 @@ input:focus, select:focus { border-color: #7c6dfa; }
   <div class="nav-tab"         id="tab-media"    onclick="nav('media')"    data-i18n="nav_media">Media Library</div>
   <div class="nav-tab"         id="tab-similar"  onclick="nav('similar')"  data-i18n="nav_similar">Duplicate Detection</div>
   <div class="nav-tab"         id="tab-settings" onclick="nav('settings')" data-i18n="nav_settings">Settings</div>
+  <div class="nav-tab"         id="tab-users"    onclick="nav('users')"    style="display:none">使用者管理</div>
+  <div class="nav-right">
+    <span id="navUser" class="nav-user"></span>
+    <button class="btn" style="padding:5px 12px;font-size:.8rem" onclick="doLogout()">登出</button>
+  </div>
 </nav>
 
 <!-- ══════════════════════ PAGE 1: Add Channel ══════════════════════ -->
@@ -621,7 +674,7 @@ input:focus, select:focus { border-color: #7c6dfa; }
 <div class="settings-grid">
 
   <!-- Download Settings -->
-  <div class="card">
+  <div class="card" id="card-admin-download">
     <div class="section-title" data-i18n="s_download_title">Download Settings</div>
 
     <label data-i18n="s_path_label">Video Storage Path</label>
@@ -659,7 +712,7 @@ input:focus, select:focus { border-color: #7c6dfa; }
   </div>
 
   <!-- Scheduled Trigger -->
-  <div class="card" id="scheduleCard">
+  <div class="card" id="scheduleCard" data-admin-only>
     <div class="section-title" data-i18n="s_schedule_title">Scheduled Trigger</div>
     <div id="scheduleDisabledHint" style="font-size:.82rem;color:#888;margin-top:6px;display:none" data-i18n="s_schedule_disabled">
       Set Max Concurrent Channels to exactly 1 to enable scheduled triggers.
@@ -693,7 +746,7 @@ input:focus, select:focus { border-color: #7c6dfa; }
   </div>
 
   <!-- Update Check Mode -->
-  <div class="card">
+  <div class="card" id="card-admin-checkmode">
     <div class="section-title" data-i18n="s_check_mode_title">Update Check Mode</div>
 
     <div style="display:flex;flex-direction:column;gap:14px;margin-top:8px">
@@ -735,6 +788,22 @@ input:focus, select:focus { border-color: #7c6dfa; }
     <div style="margin-top:18px;display:flex;gap:10px;align-items:center">
       <button class="btn btn-primary" onclick="saveCheckMode()" data-i18n="s_save_check">Save</button>
       <span id="checkModeSaveMsg" style="font-size:.82rem;color:#3ddc84;display:none" data-i18n="s_check_saved">✓ Saved</span>
+    </div>
+  </div>
+
+  <!-- Subtitle Download Languages (admin only) -->
+  <div class="card" id="card-admin-subtitle">
+    <div class="section-title" data-i18n="s_subtitle_langs_title">Subtitle Download Languages</div>
+    <div style="font-size:.82rem;color:#666;margin-top:4px" data-i18n="s_subtitle_langs_hint">Manual subtitles in these languages will be downloaded (auto-generated subtitles are excluded)</div>
+    <div id="subtitleLangChips" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:12px"></div>
+    <div style="display:flex;gap:8px;margin-top:10px;align-items:center">
+      <input type="text" id="subtitleLangInput" placeholder="e.g. ko, fr" style="width:120px"
+        onkeydown="if(event.key==='Enter')addSubtitleLang()">
+      <button class="btn btn-ghost btn-sm" onclick="addSubtitleLang()" data-i18n="s_subtitle_lang_add">Add</button>
+    </div>
+    <div style="margin-top:16px;display:flex;gap:10px;align-items:center">
+      <button class="btn btn-primary" onclick="saveSubtitleLangs()" data-i18n="s_subtitle_lang_save">Save</button>
+      <span id="subtitleLangSaveMsg" style="font-size:.82rem;color:#3ddc84;display:none" data-i18n="s_subtitle_lang_saved">✓ Saved</span>
     </div>
   </div>
 
@@ -785,20 +854,76 @@ input:focus, select:focus { border-color: #7c6dfa; }
       <span id="fpVolumeLbl" style="font-size:.82rem;color:#888;min-width:36px">20%</span>
     </div>
 
+    <div style="margin-top:16px">
+      <label style="font-size:.82rem;color:#888;display:block;margin-bottom:6px" data-i18n="s_subtitle_priority">Subtitle Language Priority</label>
+      <div id="subtitlePriorityList" style="display:flex;flex-direction:column;gap:4px"></div>
+      <div style="font-size:.75rem;color:#555;margin-top:4px" data-i18n="s_subtitle_priority_hint">First available language is auto-selected when playing</div>
+    </div>
+
     <div style="margin-top:18px;display:flex;gap:10px;align-items:center">
       <button class="btn btn-primary" onclick="savePlayerSettings()" data-i18n="s_save_player">Save</button>
       <span id="fpSettingsSaveMsg" style="font-size:.82rem;color:#3ddc84;display:none" data-i18n="s_fp_saved">✓ Saved</span>
     </div>
   </div>
 
-  <!-- Usage Notes (full width) -->
-  <div class="card sg-full">
+  <!-- Usage Notes (admin only, full width) -->
+  <div class="card sg-full" id="card-admin-usage">
     <div class="section-title" data-i18n="s_usage_title">Usage Notes</div>
     <div style="font-size:.83rem;color:#666;line-height:1.8">
       <p data-i18n-html="s_usage_1">• Path can be absolute (recommended), e.g. <code style="color:#aaa">D:\YTVideos</code></p>
       <p data-i18n-html="s_usage_2">• Path will be created automatically if it doesn't exist</p>
       <p data-i18n-html="s_usage_3">• After changing path, new downloads save to the new path; existing videos are not moved</p>
       <p data-i18n-html="s_usage_4">• Media Library also switches to the new path</p>
+    </div>
+  </div>
+
+</div>
+</div>
+
+<!-- ══════════════════════ PAGE 6: Users ══════════════════════ -->
+<div class="page" id="page-users">
+<div style="max-width:980px;margin:0 auto">
+
+  <!-- User list -->
+  <div class="card">
+    <div class="section-title">使用者列表</div>
+    <table class="user-table" id="userTable">
+      <thead>
+        <tr>
+          <th>帳號</th><th>管理員</th><th>新增頻道</th><th>建立時間</th><th></th>
+        </tr>
+      </thead>
+      <tbody id="userTbody"></tbody>
+    </table>
+  </div>
+
+  <!-- Add user -->
+  <div class="card">
+    <div class="section-title">新增使用者</div>
+    <div class="row2">
+      <div>
+        <label>帳號</label>
+        <input type="text" id="newUsername" placeholder="帳號名稱">
+      </div>
+      <div>
+        <label>密碼</label>
+        <input type="password" id="newPassword" placeholder="登入密碼">
+      </div>
+    </div>
+    <div style="margin-top:14px;display:flex;gap:10px;align-items:center">
+      <button class="btn btn-primary" onclick="createUser()">新增</button>
+      <span id="newUserMsg" style="font-size:.82rem;display:none"></span>
+    </div>
+  </div>
+
+  <!-- Channel access editor -->
+  <div class="card" id="chAccessCard" style="display:none">
+    <div class="section-title">頻道存取權限 — <span id="chAccessUsername"></span></div>
+    <div class="ch-list" id="chAccessList"></div>
+    <div style="margin-top:14px;display:flex;gap:10px;align-items:center">
+      <button class="btn btn-primary" onclick="saveUserChannels()">儲存</button>
+      <button class="btn" onclick="document.getElementById('chAccessCard').style.display='none'">取消</button>
+      <span id="chAccessMsg" style="font-size:.82rem;display:none"></span>
     </div>
   </div>
 
@@ -918,18 +1043,146 @@ function maybeClose(id, e) {
 }
 
 // ══════════════════════════════════════════════════════════
+// Auth
+// ══════════════════════════════════════════════════════════
+
+let _authUser = null;
+
+function _getToken() { return localStorage.getItem("ytdm_token"); }
+function _setToken(t) { localStorage.setItem("ytdm_token", t); }
+function _clearToken() { localStorage.removeItem("ytdm_token"); }
+
+async function apiFetch(url, opts = {}) {
+  const token = _getToken();
+  opts.headers = opts.headers || {};
+  if (token) opts.headers["Authorization"] = "Bearer " + token;
+  const r = await fetch(url, opts);
+  if (r.status === 401) {
+    // Use the `token` captured at request-start, not _getToken() re-read now.
+    // If token was null when we sent the request (pre-login call), don't clear
+    // a valid token that may have been stored while the request was in-flight.
+    if (token) { _clearToken(); _showLogin(); }
+    throw new Error("401");
+  }
+  return r;
+}
+
+function _showLogin() {
+  document.getElementById("loginOverlay").style.display = "flex";
+}
+function _hideLogin() {
+  document.getElementById("loginOverlay").style.display = "none";
+}
+
+async function _loadUserSettings() {
+  try {
+    const r = await apiFetch("/api/auth/settings");
+    const s = await r.json();
+    if (s.lang)      await loadLang(s.lang, true);   // true = skip API save (already from DB)
+    if (s.fpMode !== undefined || s.fpMute !== undefined ||
+        s.fpVolume !== undefined || s.fpEnabled !== undefined) {
+      if (s.fpMode    !== undefined) localStorage.setItem("fpMode",    s.fpMode);
+      if (s.fpMute    !== undefined) localStorage.setItem("fpMute",    s.fpMute);
+      if (s.fpVolume  !== undefined) localStorage.setItem("fpVolume",  s.fpVolume);
+      if (s.fpEnabled !== undefined) localStorage.setItem("fpEnabled", s.fpEnabled);
+      loadPlayerSettings();
+    }
+    if (s.subtitlePriority && Array.isArray(s.subtitlePriority)) {
+      localStorage.setItem("subtitlePriority", JSON.stringify(s.subtitlePriority));
+      _buildSubtitlePriorityList();
+    }
+  } catch {}
+}
+
+async function _saveUserSettings(patch) {
+  try {
+    await apiFetch("/api/auth/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(patch)
+    });
+  } catch {}
+}
+
+async function doLogin() {
+  const username = document.getElementById("loginUser").value.trim();
+  const password = document.getElementById("loginPass").value;
+  const errEl    = document.getElementById("loginErr");
+  errEl.style.display = "none";
+  try {
+    const r    = await apiFetch("/api/auth/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password })
+    });
+    const data = await r.json();
+    if (!r.ok) { errEl.textContent = data.error || "登入失敗"; errEl.style.display = "block"; return; }
+    _setToken(data.token);
+    _authUser = data.user;
+    await _loadUserSettings();
+    _hideLogin();
+    _applyPermissions();
+  } catch { errEl.textContent = "連線失敗"; errEl.style.display = "block"; }
+}
+
+function doLogout() {
+  _clearToken(); _authUser = null; _showLogin();
+  document.getElementById("loginUser").value = "";
+  document.getElementById("loginPass").value = "";
+}
+
+function _applyPermissions() {
+  if (!_authUser) return;
+  const isAdmin = _authUser.is_admin;
+  const canAdd  = _authUser.can_add_channel;
+
+  // Tab visibility
+  document.getElementById("tab-add").style.display      = (isAdmin || canAdd) ? "" : "none";
+  document.getElementById("tab-queue").style.display    = (isAdmin || canAdd) ? "" : "none";
+  document.getElementById("tab-similar").style.display  = isAdmin ? "" : "none";
+  document.getElementById("tab-users").style.display    = isAdmin ? "" : "none";
+  document.getElementById("tab-settings").style.display = ""; // visible to all
+
+  // Admin-only settings cards
+  const adminOnly = ["card-admin-download", "scheduleCard", "card-admin-checkmode", "card-admin-subtitle", "card-admin-usage"];
+  adminOnly.forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.style.display = isAdmin ? "" : "none";
+  });
+
+  document.getElementById("navUser").textContent = _authUser.username;
+
+  // Default landing page
+  if (!isAdmin && !canAdd) nav("media");
+}
+
+async function _checkAuth() {
+  const token = _getToken();
+  if (!token) { _showLogin(); return; }
+  try {
+    const r = await apiFetch("/api/auth/me", { headers: { Authorization: "Bearer " + token } });
+    if (!r.ok) { _showLogin(); return; }
+    _authUser = await r.json();
+    await _loadUserSettings();
+    _hideLogin();
+    _applyPermissions();
+  } catch { _showLogin(); }
+}
+
+// ══════════════════════════════════════════════════════════
 // Navigation
 // ══════════════════════════════════════════════════════════
 
-const PAGES = ["add","queue","media","similar","settings"];
+const PAGES = ["add","queue","media","similar","settings","users"];
 function nav(name) {
   PAGES.forEach(p => {
-    document.getElementById("page-"+p).classList.toggle("active", p===name);
-    document.getElementById("tab-"+p).classList.toggle("active", p===name);
+    document.getElementById("page-"+p)?.classList.toggle("active", p===name);
+    document.getElementById("tab-"+p)?.classList.toggle("active", p===name);
   });
   if (name === "queue")    { loadQueue(); startQueuePoll(); }
   if (name === "media")    { loadFolders(); loadMedia(); }
   if (name === "settings") { loadSettings(); }
+  if (name === "users")    { loadUsers(); }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -967,11 +1220,11 @@ async function addJob() {
   try {
     // Check for duplicate URL — if already in queue, trigger update check instead
     const normUrl = url.replace(/\/+$/, "").toLowerCase();
-    const existing = await fetch("/api/jobs").then(r => r.json());
+    const existing = await apiFetch("/api/jobs").then(r => r.json());
     const dup = existing.find(j => (j.url || "").replace(/\/+$/, "").toLowerCase() === normUrl);
     if (dup) {
       if (dup.status !== "running" && dup.status !== "prefetching") {
-        await fetch(`/api/jobs/${dup.id}/start`, {method: "POST"});
+        await apiFetch(`/api/jobs/${dup.id}/start`, {method: "POST"});
       }
       document.getElementById("url").value      = "";
       document.getElementById("taskName").value = "";
@@ -981,7 +1234,7 @@ async function addJob() {
       return;
     }
 
-    const res = await fetch("/api/jobs", {
+    const res = await apiFetch("/api/jobs", {
       method: "POST",
       headers: {"Content-Type":"application/json"},
       body: JSON.stringify({
@@ -1041,7 +1294,7 @@ function startQueuePoll() {
 }
 
 async function loadQueue() {
-  const res  = await fetch("/api/jobs");
+  const res  = await apiFetch("/api/jobs");
   const list = await res.json();
   list.sort((a,b) => b.created_at.localeCompare(a.created_at));
   renderQueue(list);
@@ -1293,20 +1546,20 @@ async function renderLog(job) {
 
 async function restartJob(jobId, e) {
   e.stopPropagation();
-  await fetch(`/api/jobs/${jobId}/start`, {method:"POST"});
+  await apiFetch(`/api/jobs/${jobId}/start`, {method:"POST"});
   loadQueue();
 }
 
 async function stopJob(jobId, e) {
   e.stopPropagation();
-  await fetch(`/api/jobs/${jobId}/stop`, {method:"POST"});
+  await apiFetch(`/api/jobs/${jobId}/stop`, {method:"POST"});
   loadQueue();
 }
 
 async function deleteJob(jobId, e) {
   e.stopPropagation();
   if (!confirm(t("confirm_delete_job"))) return;
-  await fetch(`/api/jobs/${jobId}`, {method:"DELETE"});
+  await apiFetch(`/api/jobs/${jobId}`, {method:"DELETE"});
   expandedJobIds.delete(jobId);
   if (selectedJobId === jobId) {
     selectedJobId = null;
@@ -1373,7 +1626,7 @@ function setTileSize(v) {
 }
 
 async function loadFolders() {
-  const res = await fetch("/api/media/folders");
+  const res = await apiFetch("/api/media/folders");
   const fls = await res.json();
   const sel = document.getElementById("mediaFolder");
   const cur = sel.value;
@@ -1414,7 +1667,7 @@ async function loadMedia(background = false) {
   // Background refresh: fetch silently, update _allData and re-apply filters
   if (background) {
     try {
-      const res  = await fetch("/api/media");
+      const res  = await apiFetch("/api/media");
       const data = await res.json();
       const oldKeys = _allData.map(f => f.rel_path).join(",");
       const newKeys = data.map(f => f.rel_path).join(",");
@@ -1434,7 +1687,7 @@ async function loadMedia(background = false) {
   // Cold start: show spinner, fetch, render
   wall.innerHTML = "";
   loading.style.display = "block";
-  const res  = await fetch("/api/media");
+  const res  = await apiFetch("/api/media");
   _allData   = await res.json();
   loading.style.display = "none";
   _applyFilters();
@@ -1446,8 +1699,14 @@ async function refreshMedia() {
   wall.innerHTML = "";
   loading.style.display = "block";
   try {
-    const res = await fetch("/api/media/refresh", { method: "POST" });
-    _allData  = await res.json();
+    const res = await apiFetch("/api/media/refresh", { method: "POST" });
+    if (res.ok) {
+      _allData = await res.json();
+    } else {
+      // Non-admin cannot trigger a rescan; re-fetch filtered cache instead
+      const r2 = await apiFetch("/api/media");
+      _allData = await r2.json();
+    }
     await loadFolders();
   } catch {}
   loading.style.display = "none";
@@ -1521,7 +1780,7 @@ function createTile(f) {
     video.style.display = "none";
     if (img) img.style.display = "block";
   });
-  tile.addEventListener("click", () => openFloatPlayer(f.rel_path, f.title, isAudio));
+  tile.addEventListener("click", () => openFloatPlayer(f.rel_path, f.title, isAudio, f.subtitles || {}));
 
   return tile;
 }
@@ -1537,12 +1796,27 @@ function formatDate(d) {
 
 let fpZTop = 900;
 
-function openFullscreenPlayer(relPath, title) {
+function openFullscreenPlayer(relPath, title, subtitles = {}) {
   const overlay = document.getElementById("fsoOverlay");
   const video   = document.getElementById("fso-video");
   const muted   = localStorage.getItem("fpMute") === "1";
   const vol     = parseFloat(localStorage.getItem("fpVolume") ?? "20") / 100;
   document.getElementById("fso-title").textContent = title;
+  // Reset src before manipulating tracks
+  video.src = "";
+  video.querySelectorAll("track").forEach(t => t.remove());
+  // Add subtitle tracks in priority order
+  const priority = JSON.parse(localStorage.getItem("subtitlePriority") || '["zh-Hant","zh-Hans","en","ja"]');
+  let defSet = false;
+  priority.forEach(lang => {
+    if (subtitles && subtitles[lang]) {
+      const tr = document.createElement("track");
+      tr.kind = "subtitles"; tr.src = dlUrl(subtitles[lang]);
+      tr.srclang = lang; tr.label = lang;
+      if (!defSet) { tr.default = true; defSet = true; }
+      video.appendChild(tr);
+    }
+  });
   video.src     = dlUrl(relPath);
   video.muted   = muted;
   video.volume  = vol;
@@ -1573,10 +1847,10 @@ function fsoKeyHandler(e) {
   if (e.key === "Escape") fsoClose();
 }
 
-function openFloatPlayer(relPath, title, isAudio) {
+function openFloatPlayer(relPath, title, isAudio, subtitles = {}) {
   // Floating player disabled → use fullscreen overlay instead
   if (localStorage.getItem("fpEnabled") !== "1") {
-    openFullscreenPlayer(relPath, title);
+    openFullscreenPlayer(relPath, title, subtitles);
     return;
   }
   // Single mode: close all existing players first
@@ -1588,6 +1862,14 @@ function openFloatPlayer(relPath, title, isAudio) {
   const offset = document.querySelectorAll(".float-player").length * 36;
   const muted  = localStorage.getItem("fpMute") === "1";
   const vol    = parseFloat(localStorage.getItem("fpVolume") ?? "20") / 100;
+
+  // Build subtitle tracks in user priority order
+  const _subPriority = JSON.parse(localStorage.getItem("subtitlePriority") || '["zh-Hant","zh-Hans","en","ja"]');
+  let _defSet = false;
+  const trackHtml = _subPriority.filter(lang => subtitles && subtitles[lang]).map(lang => {
+    const def = !_defSet ? (_defSet = true, ' default') : '';
+    return `<track kind="subtitles" src="${dlUrl(subtitles[lang])}" srclang="${lang}" label="${lang}"${def}>`;
+  }).join('');
 
   const win = document.createElement("div");
   win.className = "float-player";
@@ -1602,7 +1884,7 @@ function openFloatPlayer(relPath, title, isAudio) {
       <button class="fp-btn fp-close" title="關閉" onclick="fpClose(this.closest('.float-player'))">✕</button>
     </div>
     <div class="fp-body">
-      <video src="${src}" controls autoplay playsinline${muted ? " muted" : ""}></video>
+      <video src="${src}" controls autoplay playsinline${muted ? " muted" : ""}>${trackHtml}</video>
     </div>
     <div class="fp-resize">⤡</div>`;
 
@@ -1735,7 +2017,7 @@ async function loadSimilar() {
   document.getElementById("simDelBtn").style.display = "none";
 
   try {
-    const res  = await fetch("/api/media/similar");
+    const res  = await apiFetch("/api/media/similar");
     const data = await res.json();
     renderSimilar(data.groups ?? data, data.total_scanned ?? "?");
   } finally {
@@ -1803,7 +2085,7 @@ async function deleteChecked() {
   if (!confirm(t("confirm_delete_n", cbs.length))) return;
 
   for (const cb of cbs) {
-    await fetch("/api/media/delete", {
+    await apiFetch("/api/media/delete", {
       method:"POST", headers:{"Content-Type":"application/json"},
       body: JSON.stringify({rel_path: cb.dataset.rel})
     });
@@ -1816,7 +2098,7 @@ async function deleteChecked() {
 // ══════════════════════════════════════════════════════════
 
 async function loadCookieOpts() {
-  const res   = await fetch("/api/cookies");
+  const res   = await apiFetch("/api/cookies");
   const files = await res.json();
   window._cookieFiles = files;   // cache for use in channel cards
   const sel   = document.getElementById("cookiesSelect");
@@ -1833,7 +2115,7 @@ async function loadCookieOpts() {
 
 async function updateJobCookies(jobId, cookiesFile, e) {
   e.stopPropagation();
-  await fetch(`/api/jobs/${jobId}`, {
+  await apiFetch(`/api/jobs/${jobId}`, {
     method: "PATCH",
     headers: {"Content-Type":"application/json"},
     body: JSON.stringify({ cookies_file: cookiesFile || null })
@@ -1862,7 +2144,7 @@ async function uploadCookies(input) {
 
   const fd = new FormData();
   fd.append("file", input.files[0]);
-  const r = await fetch("/api/cookies", {method:"POST", body:fd});
+  const r = await apiFetch("/api/cookies", {method:"POST", body:fd});
   const d = await r.json();
   if (d.error) { alert(d.error); return; }
   input.value = "";
@@ -1878,7 +2160,7 @@ function openCkTutorial() {
 
 async function deleteCkFile(name) {
   if (!confirm(t("confirm_ck_delete", name))) return;
-  await fetch(`/api/cookies/${encodeURIComponent(name)}`, {method:"DELETE"});
+  await apiFetch(`/api/cookies/${encodeURIComponent(name)}`, {method:"DELETE"});
   await loadCookieOpts();
   renderCkList();
 }
@@ -1889,7 +2171,7 @@ function openCkMgr() {
 }
 
 async function renderCkList() {
-  const res   = await fetch("/api/cookies");
+  const res   = await apiFetch("/api/cookies");
   const files = await res.json();
   const el    = document.getElementById("ckList");
   if (!files.length) {
@@ -1908,7 +2190,7 @@ async function renderCkList() {
 // ══════════════════════════════════════════════════════════
 
 async function loadSettings() {
-  const res  = await fetch("/api/settings");
+  const res  = await apiFetch("/api/settings");
   const data = await res.json();
   document.getElementById("settingDownloadDir").value = data.download_dir || "";
   document.getElementById("currentDownloadDir").textContent = data.download_dir || t("s_not_set");
@@ -1927,6 +2209,8 @@ async function loadSettings() {
   if (radio) radio.checked = true;
   document.getElementById("recentCountInput").value = data.recent_count || 50;
   document.getElementById("recentCountRow").style.display = mode === "recent" ? "flex" : "none";
+  _subtitleLangs = data.subtitle_langs || ["zh-Hant", "zh-Hans", "en", "ja"];
+  _buildSubtitleLangChips();
 }
 
 async function saveCheckMode() {
@@ -1935,7 +2219,7 @@ async function saveCheckMode() {
   const msg   = document.getElementById("checkModeSaveMsg");
   const dir   = document.getElementById("settingDownloadDir").value.trim()
               || document.getElementById("currentDownloadDir").textContent;
-  await fetch("/api/settings", {
+  await apiFetch("/api/settings", {
     method: "POST",
     headers: {"Content-Type":"application/json"},
     body: JSON.stringify({ download_dir: dir, check_mode: mode, recent_count: count })
@@ -1953,7 +2237,7 @@ async function saveSettings() {
 
   if (!dir) { err.textContent = t("s_path_empty"); err.style.display="inline"; return; }
 
-  const res  = await fetch("/api/settings", {
+  const res  = await apiFetch("/api/settings", {
     method: "POST",
     headers: {"Content-Type":"application/json"},
     body: JSON.stringify({
@@ -1984,7 +2268,7 @@ function _updateScheduleCardState(concurrency) {
 
 async function saveSchedule() {
   const days = [...document.querySelectorAll(".sched-day:checked")].map(cb => parseInt(cb.value));
-  const res = await fetch("/api/settings", {
+  const res = await apiFetch("/api/settings", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
     body: JSON.stringify({
@@ -2025,6 +2309,7 @@ function loadPlayerSettings() {
   document.getElementById("fpVolumeLbl").textContent = vol + "%";
   document.getElementById("fpEnabled").checked = enabled;
   _updateFpPlayMode(enabled);
+  _buildSubtitlePriorityList();
 }
 
 function _updateFpPlayMode(enabled) {
@@ -2034,17 +2319,93 @@ function _updateFpPlayMode(enabled) {
 }
 
 function savePlayerSettings() {
-  const mode    = document.querySelector('input[name=fpMode]:checked')?.value || "multi";
-  const mute    = document.getElementById("fpMuteDefault").checked;
-  const vol     = document.getElementById("fpVolumeDefault").value;
-  const enabled = document.getElementById("fpEnabled").checked;
+  const mode     = document.querySelector('input[name=fpMode]:checked')?.value || "multi";
+  const mute     = document.getElementById("fpMuteDefault").checked ? "1" : "0";
+  const vol      = document.getElementById("fpVolumeDefault").value;
+  const enabled  = document.getElementById("fpEnabled").checked ? "1" : "0";
+  const priority = JSON.parse(localStorage.getItem("subtitlePriority") || '["zh-Hant","zh-Hans","en","ja"]');
   localStorage.setItem("fpMode",    mode);
-  localStorage.setItem("fpMute",    mute    ? "1" : "0");
+  localStorage.setItem("fpMute",    mute);
   localStorage.setItem("fpVolume",  vol);
-  localStorage.setItem("fpEnabled", enabled ? "1" : "0");
+  localStorage.setItem("fpEnabled", enabled);
+  _saveUserSettings({ fpMode: mode, fpMute: mute, fpVolume: vol, fpEnabled: enabled, subtitlePriority: priority });
   const msg = document.getElementById("fpSettingsSaveMsg");
   msg.style.display = "inline";
   setTimeout(() => { msg.style.display = "none"; }, 2500);
+}
+
+// ══════════════════════════════════════════════════════════
+// Subtitle Language Settings
+// ══════════════════════════════════════════════════════════
+
+let _subtitleLangs = ["zh-Hant", "zh-Hans", "en", "ja"];
+
+function _buildSubtitleLangChips() {
+  const container = document.getElementById("subtitleLangChips");
+  if (!container) return;
+  container.innerHTML = "";
+  _subtitleLangs.forEach((lang, i) => {
+    const chip = document.createElement("span");
+    chip.className = "ch-chip";
+    chip.style.display = "inline-flex";
+    chip.style.alignItems = "center";
+    chip.style.gap = "4px";
+    chip.innerHTML = `${esc(lang)}<button onclick="_removeSubtitleLang(${i})"
+      style="background:none;border:none;color:#f08080;cursor:pointer;padding:0 2px;font-size:.85rem;line-height:1">✕</button>`;
+    container.appendChild(chip);
+  });
+}
+
+function _removeSubtitleLang(i) {
+  _subtitleLangs.splice(i, 1);
+  _buildSubtitleLangChips();
+}
+
+function addSubtitleLang() {
+  const input = document.getElementById("subtitleLangInput");
+  const vals = input.value.split(",").map(s => s.trim()).filter(s => s && !_subtitleLangs.includes(s));
+  _subtitleLangs.push(...vals);
+  input.value = "";
+  _buildSubtitleLangChips();
+}
+
+async function saveSubtitleLangs() {
+  const dir = document.getElementById("settingDownloadDir").value.trim()
+            || (document.getElementById("currentDownloadDir").textContent || "").trim();
+  if (!dir || dir === t("s_not_set")) return;
+  await apiFetch("/api/settings", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({ download_dir: dir, subtitle_langs: _subtitleLangs })
+  });
+  const msg = document.getElementById("subtitleLangSaveMsg");
+  msg.style.display = "inline";
+  setTimeout(() => { msg.style.display = "none"; }, 2500);
+}
+
+function _buildSubtitlePriorityList() {
+  const list = document.getElementById("subtitlePriorityList");
+  if (!list) return;
+  const priority = JSON.parse(localStorage.getItem("subtitlePriority") || '["zh-Hant","zh-Hans","en","ja"]');
+  list.innerHTML = "";
+  priority.forEach((lang, i) => {
+    const row = document.createElement("div");
+    row.style.cssText = "display:flex;align-items:center;gap:6px";
+    row.innerHTML = `
+      <span style="flex:1;font-size:.85rem;color:#ccc;background:#1e1e2e;border:1px solid #2d2d3f;border-radius:6px;padding:4px 10px">${esc(lang)}</span>
+      <button class="btn btn-ghost btn-sm" style="padding:2px 7px;min-width:28px" onclick="_subtitlePriorityMove(${i},-1)"${i===0?' disabled':''}>↑</button>
+      <button class="btn btn-ghost btn-sm" style="padding:2px 7px;min-width:28px" onclick="_subtitlePriorityMove(${i},1)"${i===priority.length-1?' disabled':''}>↓</button>`;
+    list.appendChild(row);
+  });
+}
+
+function _subtitlePriorityMove(i, dir) {
+  const priority = JSON.parse(localStorage.getItem("subtitlePriority") || '["zh-Hant","zh-Hans","en","ja"]');
+  const j = i + dir;
+  if (j < 0 || j >= priority.length) return;
+  [priority[i], priority[j]] = [priority[j], priority[i]];
+  localStorage.setItem("subtitlePriority", JSON.stringify(priority));
+  _buildSubtitlePriorityList();
 }
 
 // ══════════════════════════════════════════════════════════
@@ -2060,7 +2421,7 @@ function t(key, ...args) {
   return s;
 }
 
-async function loadLang(code) {
+async function loadLang(code, skipSave = false) {
   try {
     const res = await fetch(`/static/lang/${code}.json`);
     if (!res.ok) throw new Error("not found");
@@ -2072,6 +2433,7 @@ async function loadLang(code) {
   localStorage.setItem('lang', code);
   document.documentElement.lang = code;
   applyLang();
+  if (!skipSave) _saveUserSettings({ lang: code });
 }
 
 function applyLang() {
@@ -2119,14 +2481,108 @@ function setLang(code) {
 }
 
 // ══════════════════════════════════════════════════════════
+// Page 6 – User Management
+// ══════════════════════════════════════════════════════════
+
+let _editingUid = null;
+
+async function loadUsers() {
+  const r    = await apiFetch("/api/users");
+  const rows = await r.json();
+  const tb   = document.getElementById("userTbody");
+  tb.innerHTML = rows.map(u => `
+    <tr>
+      <td style="font-weight:600;color:#ccc">${u.username}</td>
+      <td><span class="${u.is_admin ? 'badge-on' : 'badge-off'}">${u.is_admin ? '是' : '否'}</span></td>
+      <td><span class="${u.can_add_channel ? 'badge-on' : 'badge-off'}">${u.can_add_channel ? '是' : '否'}</span></td>
+      <td style="color:#666;font-size:.8rem">${(u.created_at||'').slice(0,10)}</td>
+      <td style="display:flex;gap:6px;flex-wrap:wrap">
+        <button class="btn" style="padding:4px 10px;font-size:.78rem"
+          onclick="editUserPerms(${u.id},'${u.username}',${u.is_admin},${u.can_add_channel})">權限</button>
+        <button class="btn" style="padding:4px 10px;font-size:.78rem"
+          onclick="openChAccess(${u.id},'${u.username}')">頻道</button>
+        ${u.username !== 'admin' ? `<button class="btn" style="padding:4px 10px;font-size:.78rem;color:#f66"
+          onclick="deleteUser(${u.id},'${u.username}')">刪除</button>` : ''}
+      </td>
+    </tr>`).join('');
+}
+
+async function editUserPerms(uid, username, isAdmin, canAdd) {
+  const newAdmin = confirm(`「${username}」\n\n目前管理員：${isAdmin ? '是' : '否'}\n按確定切換`);
+  if (newAdmin !== null) {
+    await apiFetch(`/api/users/${uid}`, { method: "PATCH",
+      headers: {"Content-Type":"application/json"},
+      body: JSON.stringify({ is_admin: !isAdmin, can_add_channel: !isAdmin || canAdd })
+    });
+    loadUsers();
+  }
+}
+
+async function createUser() {
+  const username = document.getElementById("newUsername").value.trim();
+  const password = document.getElementById("newPassword").value;
+  const msg      = document.getElementById("newUserMsg");
+  if (!username || !password) { msg.textContent = "帳號和密碼不可空白"; msg.style.color="#f44"; msg.style.display="block"; return; }
+  const r = await apiFetch("/api/users", { method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ username, password })
+  });
+  const data = await r.json();
+  if (!r.ok) { msg.textContent = data.error || "新增失敗"; msg.style.color="#f44"; msg.style.display="block"; return; }
+  msg.textContent = "✓ 新增成功"; msg.style.color="#3ddc84"; msg.style.display="block";
+  document.getElementById("newUsername").value = "";
+  document.getElementById("newPassword").value = "";
+  setTimeout(() => msg.style.display="none", 2000);
+  loadUsers();
+}
+
+async function deleteUser(uid, username) {
+  if (!confirm(`確定刪除使用者「${username}」？`)) return;
+  await apiFetch(`/api/users/${uid}`, { method: "DELETE" });
+  loadUsers();
+}
+
+async function openChAccess(uid, username) {
+  _editingUid = uid;
+  document.getElementById("chAccessUsername").textContent = username;
+  document.getElementById("chAccessCard").style.display = "block";
+  document.getElementById("chAccessMsg").style.display  = "none";
+  // Get all folders + user's allowed channels
+  const [fRes, cRes] = await Promise.all([
+    apiFetch("/api/media/folders"),
+    apiFetch(`/api/users/${uid}/channels`)
+  ]);
+  const allFolders  = await fRes.json();
+  const userCh      = new Set(await cRes.json());
+  const list        = document.getElementById("chAccessList");
+  list.innerHTML    = allFolders.map(f => `
+    <label class="ch-chip">
+      <input type="checkbox" value="${f}" ${userCh.has(f) ? 'checked' : ''}>
+      ${f}
+    </label>`).join('');
+}
+
+async function saveUserChannels() {
+  if (!_editingUid) return;
+  const checked  = [...document.querySelectorAll("#chAccessList input:checked")].map(c => c.value);
+  const msg      = document.getElementById("chAccessMsg");
+  await apiFetch(`/api/users/${_editingUid}/channels`, { method: "PUT",
+    headers: {"Content-Type":"application/json"}, body: JSON.stringify(checked)
+  });
+  msg.textContent = "✓ 已儲存"; msg.style.color="#3ddc84"; msg.style.display="block";
+  setTimeout(() => msg.style.display="none", 2000);
+}
+
+// ══════════════════════════════════════════════════════════
 // Init
 // ══════════════════════════════════════════════════════════
 
 (async () => {
   const saved = localStorage.getItem('lang') || 'en';
-  await loadLang(saved);
-  loadCookieOpts();
+  await loadLang(saved, true);   // skipSave — no token yet
   loadPlayerSettings();
+  await _checkAuth();   // auth first — confirms token before any API calls
+  loadCookieOpts();     // safe to call now (token is set)
 })();
 </script>
 </body>

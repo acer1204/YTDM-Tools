@@ -155,6 +155,14 @@
   "s_path_empty": "路径不能为空",
   "s_clipboard_error": "无法读取剪贴板，请手动粘贴",
 
+  "s_subtitle_langs_title": "字幕下载语言",
+  "s_subtitle_langs_hint": "下载时会自动获取这些语言的手动字幕（不包含自动生成字幕）",
+  "s_subtitle_lang_add": "添加",
+  "s_subtitle_lang_save": "保存",
+  "s_subtitle_lang_saved": "✓ 已保存",
+  "s_subtitle_priority": "字幕语言优先顺序",
+  "s_subtitle_priority_hint": "播放时自动选取第一个有字幕的语言",
+
   "ck_modal_title": "Cookies 管理",
   "ck_modal_hint": "使用浏览器扩展「Get cookies.txt LOCALLY」在 YouTube 页面导出 cookies，上传后可下载需要年龄验证或会员专属的视频。",
   "ck_upload_new": "上传新文件",

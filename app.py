@@ -2,10 +2,129 @@ import os, json, shutil, threading, uuid, re, time
 from pathlib import Path
 from datetime import datetime
 from difflib import SequenceMatcher
-from flask import Flask, request, jsonify, send_from_directory
+from functools import wraps
+from flask import Flask, request, jsonify, send_from_directory, g
 import yt_dlp
+import psycopg2, psycopg2.extras
+import jwt as pyjwt
+import bcrypt
 
 app = Flask(__name__, static_folder="static")
+
+# ── Auth / DB ─────────────────────────────────────────────────────────────────
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+JWT_SECRET   = os.environ.get("JWT_SECRET", "ytdm-dev-secret-change-me")
+JWT_EXPIRY_S = 7 * 24 * 3600   # 7 days
+AUTH_ENABLED = bool(DATABASE_URL)
+
+def _open_db():
+    return psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
+
+def get_db():
+    if not hasattr(g, "_db") or g._db.closed:
+        g._db = _open_db()
+    return g._db
+
+@app.teardown_appcontext
+def _close_db(e=None):
+    db = g.pop("_db", None)
+    if db and not db.closed:
+        db.close()
+
+def _init_db():
+    conn = _open_db()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS users (
+                        id               SERIAL PRIMARY KEY,
+                        username         VARCHAR(64) UNIQUE NOT NULL,
+                        password_hash    TEXT NOT NULL,
+                        is_admin         BOOLEAN DEFAULT FALSE,
+                        can_add_channel  BOOLEAN DEFAULT FALSE,
+                        created_at       TIMESTAMP DEFAULT NOW()
+                    )
+                """)
+                cur.execute("""
+                    CREATE TABLE IF NOT EXISTS user_channel_access (
+                        user_id      INTEGER REFERENCES users(id) ON DELETE CASCADE,
+                        channel_name TEXT NOT NULL,
+                        PRIMARY KEY (user_id, channel_name)
+                    )
+                """)
+                # Migration: add settings column for existing tables
+                cur.execute("""
+                    ALTER TABLE users
+                    ADD COLUMN IF NOT EXISTS settings JSONB NOT NULL DEFAULT '{}'
+                """)
+                admin_pw  = os.environ.get("ADMIN_PASSWORD", "admin123")
+                pw_hash   = bcrypt.hashpw(admin_pw.encode(), bcrypt.gensalt()).decode()
+                cur.execute("""
+                    INSERT INTO users (username, password_hash, is_admin, can_add_channel)
+                    VALUES (%s, %s, TRUE, TRUE)
+                    ON CONFLICT (username) DO NOTHING
+                """, ("admin", pw_hash))
+    finally:
+        conn.close()
+
+if AUTH_ENABLED:
+    for _attempt in range(15):
+        try:
+            _init_db()
+            print(f"[auth] DB ready (attempt {_attempt+1})")
+            break
+        except Exception as _auth_err:
+            print(f"[auth] DB not ready (attempt {_attempt+1}): {_auth_err}")
+            if _attempt < 14:
+                time.sleep(2)
+            else:
+                print("[auth] DB init failed after 15 attempts — auth disabled")
+                AUTH_ENABLED = False
+
+def _make_token(user):
+    return pyjwt.encode({
+        "sub":             str(user["id"]),
+        "username":        user["username"],
+        "is_admin":        user["is_admin"],
+        "can_add_channel": user["can_add_channel"],
+        "exp":             int(time.time()) + JWT_EXPIRY_S,
+    }, JWT_SECRET, algorithm="HS256")
+
+def _decode_token(token):
+    return pyjwt.decode(token, JWT_SECRET, algorithms=["HS256"])
+
+def _current_user():
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return None
+    try:
+        return _decode_token(auth[7:])
+    except Exception:
+        return None
+
+@app.before_request
+def _auth_gate():
+    # Always public
+    if request.path in ("/", "/favicon.ico") or request.path.startswith("/static/") or request.path.startswith("/dl/"):
+        return
+    if request.path == "/api/auth/login":
+        return
+    if not AUTH_ENABLED:
+        g.user = {"sub": 0, "username": "admin", "is_admin": True, "can_add_channel": True}
+        return
+    user = _current_user()
+    if not user:
+        return jsonify({"error": "unauthorized"}), 401
+    g.user = user
+
+def require_admin(f):
+    @wraps(f)
+    def wrapper(*args, **kwargs):
+        if not g.get("user", {}).get("is_admin"):
+            return jsonify({"error": "forbidden"}), 403
+        return f(*args, **kwargs)
+    return wrapper
 
 DATA_DIR      = Path(os.environ.get("DATA_DIR", "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
@@ -30,6 +149,7 @@ _DEFAULT_SETTINGS = {
     "download_dir":  os.environ.get("DOWNLOAD_DIR", str(Path("downloads").absolute())),
     "check_mode":    "full",   # "full" | "fast" | "recent"
     "recent_count":  50,
+    "subtitle_langs": ["zh-Hant", "zh-Hans", "en", "ja"],
 }
 
 def load_settings() -> dict:
@@ -314,19 +434,33 @@ def _is_channel_url(url: str) -> bool:
     ))
 
 
-def _fetch_flat(url: str, opts: dict) -> tuple[list, dict]:
-    """Return (entries, info_dict) from a flat extraction."""
-    try:
-        with yt_dlp.YoutubeDL(opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-        if not info:
-            return [], {}
-        entries = info.get("entries") or []
-        if not entries and info.get("id"):
-            entries = [info]
-        return entries, info
-    except Exception:
-        return [], {}
+def _fetch_flat(url: str, opts: dict, timeout_s: int = 90) -> tuple[list, dict]:
+    """Return (entries, info_dict) from a flat extraction.
+    Runs in a daemon thread so we can enforce a wall-clock timeout — prevents
+    certain channels (e.g. Shorts-heavy or geo-restricted) from hanging forever.
+    """
+    _result: list = [[], {}]
+
+    def _worker():
+        try:
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+            if not info:
+                return
+            entries = info.get("entries") or []
+            if not entries and info.get("id"):
+                entries = [info]
+            _result[0] = entries
+            _result[1] = info
+        except Exception:
+            pass
+
+    t = threading.Thread(target=_worker, daemon=True)
+    t.start()
+    t.join(timeout=timeout_s)
+    if t.is_alive():
+        print(f"[warn] _fetch_flat timed out ({timeout_s}s): {url}", flush=True)
+    return _result[0], _result[1]
 
 
 def fetch_channel_info(url: str, cookies_file: str | None, max_items: int | None = None):
@@ -336,9 +470,10 @@ def fetch_channel_info(url: str, cookies_file: str | None, max_items: int | None
     max_items: if set, only fetch the most recent N items per tab (playlistend).
     """
     opts = {
-        "quiet":        True,
-        "extract_flat": "in_playlist",
-        "ignoreerrors": True,
+        "quiet":          True,
+        "extract_flat":   "in_playlist",
+        "ignoreerrors":   True,
+        "socket_timeout": 30,   # per-connection timeout (seconds)
     }
     if cookies_file:
         p = COOKIES_DIR / cookies_file
@@ -356,7 +491,9 @@ def fetch_channel_info(url: str, cookies_file: str | None, max_items: int | None
 
         for tab in ("/videos", "/shorts"):
             kind = "short" if tab == "/shorts" else "video"
-            tab_entries, tab_info = _fetch_flat(base + tab, opts)
+            # Pass a copy — yt-dlp mutates the opts dict in __init__,
+            # so reusing the same dict for the second tab can corrupt extraction.
+            tab_entries, tab_info = _fetch_flat(base + tab, dict(opts))
             if channel_name is None and tab_info:
                 channel_name = (
                     tab_info.get("uploader") or tab_info.get("channel") or
@@ -623,6 +760,11 @@ def run_download(job_id: str):
                     "id": vid_id, "title": title,
                     "status": "pending", "error_msg": "", "percent": 0, "speed": None,
                 }
+        # During the incomplete phase (playlist pre-scan), title is often empty.
+        # Defer all text/metadata filters to the second call (incomplete=False)
+        # when full info is available, so keyword checks are never applied to "".
+        if incomplete:
+            return None
         # Apply filters
         for kw in exclude_kws:
             if kw.lower() in title.lower():
@@ -724,10 +866,13 @@ def run_download(job_id: str):
 
     quality = filters.get("quality", "best")
     format_map = {
-        "best":       "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-        "720p":       "bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]",
-        "480p":       "bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]",
-        "audio_only": "bestaudio[ext=m4a]/bestaudio",
+        # [acodec^=mp4a] ensures AAC audio — prevents yt-dlp from picking
+        # EAC-3 / Dolby Digital Plus (ec-3) which YouTube now offers on some
+        # videos but browsers cannot decode in HTML5 <video>.
+        "best":       "bestvideo[ext=mp4]+bestaudio[acodec^=mp4a][ext=m4a]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "720p":       "bestvideo[height<=720][ext=mp4]+bestaudio[acodec^=mp4a][ext=m4a]/bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]",
+        "480p":       "bestvideo[height<=480][ext=mp4]+bestaudio[acodec^=mp4a][ext=m4a]/bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]",
+        "audio_only": "bestaudio[acodec^=mp4a][ext=m4a]/bestaudio[ext=m4a]/bestaudio",
     }
 
     # Tracks the current video being downloaded so logger errors can be associated
@@ -746,6 +891,7 @@ def run_download(job_id: str):
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    sub_langs = settings.get("subtitle_langs", ["zh-Hant", "zh-Hans", "en", "ja"])
     dl_opts = {
         "format":            format_map.get(quality, "best"),
         "outtmpl":           str(output_dir / "%(title)s" / "%(title)s.%(ext)s"),
@@ -757,6 +903,10 @@ def run_download(job_id: str):
         "download_archive":  str(output_dir / ".ytdl_archive.txt"),
         "writeinfojson":     True,
         "writethumbnail":    True,
+        "writesubtitles":    bool(sub_langs),
+        "writeautomaticsub": False,
+        "subtitleslangs":    sub_langs if sub_langs else [],
+        "subtitlesformat":   "vtt/best",
         "js_runtimes":       {"node": {}},
         "remote_components": ["ejs:github"],
     }
@@ -937,6 +1087,9 @@ def list_jobs():
 
 @app.route("/api/jobs", methods=["POST"])
 def create_job():
+    user = g.get("user", {})
+    if not user.get("is_admin") and not user.get("can_add_channel"):
+        return jsonify({"error": "forbidden"}), 403
     data = request.json or {}
     url  = (data.get("url") or "").strip()
     if not url:
@@ -1111,6 +1264,13 @@ def _make_entry(base: Path, d: Path, files: list, title_override: str | None = N
     except FileNotFoundError:
         return None
 
+    # Detect subtitle files: yt-dlp names them "<title>.<lang>.vtt"
+    subtitles: dict[str, str] = {}
+    for vtt in sorted(d.glob("*.vtt")):
+        parts = vtt.stem.rsplit(".", 1)
+        if len(parts) == 2 and parts[1]:
+            subtitles[parts[1]] = str(vtt.relative_to(base)).replace("\\", "/")
+
     return {
         "title":        title,
         "filename":     best.name,
@@ -1129,6 +1289,7 @@ def _make_entry(base: Path, d: Path, files: list, title_override: str | None = N
         "rel_path":     str(best.relative_to(base)).replace("\\", "/"),
         "dir_rel":      str(d.relative_to(base)).replace("\\", "/"),
         "thumbnail":    str(thumb.relative_to(base)).replace("\\", "/") if thumb else None,
+        "subtitles":    subtitles,
     }
 
 
@@ -1220,13 +1381,21 @@ def list_media():
     with _media_list_lock:
         has_data = bool(_media_list)
     if not has_data:
-        scan_videos()   # cold start: build list from disk
+        scan_videos()
     with _media_list_lock:
         data = list(_media_list)
+    user = g.get("user", {})
+    if not user.get("is_admin") and AUTH_ENABLED:
+        db = get_db()
+        with db.cursor() as cur:
+            cur.execute("SELECT channel_name FROM user_channel_access WHERE user_id = %s", (user["sub"],))
+            allowed = {r["channel_name"] for r in cur.fetchall()}
+        data = [e for e in data if e.get("channel") in allowed]
     return jsonify(data)
 
 
 @app.route("/api/media/refresh", methods=["POST"])
+@require_admin
 def refresh_media():
     """Force a full rglob scan, rebuild list and cache, return updated list."""
     scan_videos()
@@ -1237,7 +1406,14 @@ def refresh_media():
 
 @app.route("/api/media/folders", methods=["GET"])
 def list_folders():
+    user = g.get("user", {})
     folders = [d.name for d in sorted(get_download_dir().iterdir()) if d.is_dir()]
+    if not user.get("is_admin") and AUTH_ENABLED:
+        db = get_db()
+        with db.cursor() as cur:
+            cur.execute("SELECT channel_name FROM user_channel_access WHERE user_id = %s", (user["sub"],))
+            allowed = {r["channel_name"] for r in cur.fetchall()}
+        folders = [f for f in folders if f in allowed]
     return jsonify(folders)
 
 
@@ -1490,6 +1666,8 @@ def update_settings():
                 }
             except (ValueError, TypeError):
                 pass
+    if "subtitle_langs" in data and isinstance(data["subtitle_langs"], list):
+        settings["subtitle_langs"] = [str(l) for l in data["subtitle_langs"] if isinstance(l, str) and str(l).strip()]
     save_settings(settings)
     return jsonify({"ok": True, "settings": settings})
 
@@ -1499,6 +1677,162 @@ def update_settings():
 @app.route("/dl/<path:filepath>")
 def serve_dl(filepath):
     return send_from_directory(str(get_download_dir().absolute()), filepath)
+
+
+# ── Auth routes ───────────────────────────────────────────────────────────────
+
+@app.route("/api/auth/login", methods=["POST"])
+def auth_login():
+    if not AUTH_ENABLED:
+        return jsonify({"error": "auth disabled"}), 503
+    data     = request.get_json() or {}
+    username = (data.get("username") or "").strip()
+    password =  data.get("password") or ""
+    if not username or not password:
+        return jsonify({"error": "missing fields"}), 400
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute("SELECT * FROM users WHERE username = %s", (username,))
+        user = cur.fetchone()
+    if not user or not bcrypt.checkpw(password.encode(), user["password_hash"].encode()):
+        return jsonify({"error": "帳號或密碼錯誤"}), 401
+    return jsonify({
+        "token": _make_token(user),
+        "user": {
+            "id":              user["id"],
+            "username":        user["username"],
+            "is_admin":        user["is_admin"],
+            "can_add_channel": user["can_add_channel"],
+        }
+    })
+
+
+@app.route("/api/auth/me", methods=["GET"])
+def auth_me():
+    return jsonify(g.user)
+
+
+_ALLOWED_SETTING_KEYS = {"lang", "fpMode", "fpMute", "fpVolume", "fpEnabled", "subtitlePriority"}
+
+@app.route("/api/auth/settings", methods=["GET"])
+def get_user_settings():
+    uid = g.user["sub"]
+    db  = get_db()
+    with db.cursor() as cur:
+        cur.execute("SELECT settings FROM users WHERE id = %s", (uid,))
+        row = cur.fetchone()
+    return jsonify(row["settings"] if row else {})
+
+
+@app.route("/api/auth/settings", methods=["PUT"])
+def put_user_settings():
+    data = request.get_json() or {}
+    # Only allow whitelisted keys
+    clean = {k: v for k, v in data.items() if k in _ALLOWED_SETTING_KEYS}
+    uid  = g.user["sub"]
+    db   = get_db()
+    with db.cursor() as cur:
+        cur.execute("""
+            UPDATE users
+            SET settings = settings || %s::jsonb
+            WHERE id = %s
+        """, (json.dumps(clean), uid))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+# ── User management routes (admin only) ───────────────────────────────────────
+
+@app.route("/api/users", methods=["GET"])
+@require_admin
+def list_users():
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute("SELECT id, username, is_admin, can_add_channel, created_at FROM users ORDER BY id")
+        rows = cur.fetchall()
+    return jsonify([dict(r) for r in rows])
+
+
+@app.route("/api/users", methods=["POST"])
+@require_admin
+def create_user():
+    data     = request.get_json() or {}
+    username = (data.get("username") or "").strip()
+    password =  data.get("password") or ""
+    if not username or not password:
+        return jsonify({"error": "missing fields"}), 400
+    pw_hash = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+    db = get_db()
+    try:
+        with db.cursor() as cur:
+            cur.execute(
+                "INSERT INTO users (username, password_hash, is_admin, can_add_channel) VALUES (%s,%s,%s,%s) RETURNING id",
+                (username, pw_hash, False, False)
+            )
+            new_id = cur.fetchone()["id"]
+        db.commit()
+        return jsonify({"id": new_id}), 201
+    except psycopg2.errors.UniqueViolation:
+        db.rollback()
+        return jsonify({"error": "帳號已存在"}), 409
+
+
+@app.route("/api/users/<int:uid>", methods=["PATCH"])
+@require_admin
+def update_user(uid):
+    data = request.get_json() or {}
+    db   = get_db()
+    with db.cursor() as cur:
+        if data.get("password"):
+            pw_hash = bcrypt.hashpw(data["password"].encode(), bcrypt.gensalt()).decode()
+            cur.execute("UPDATE users SET password_hash=%s WHERE id=%s", (pw_hash, uid))
+        if "is_admin" in data:
+            cur.execute("UPDATE users SET is_admin=%s WHERE id=%s", (bool(data["is_admin"]), uid))
+        if "can_add_channel" in data:
+            cur.execute("UPDATE users SET can_add_channel=%s WHERE id=%s", (bool(data["can_add_channel"]), uid))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/users/<int:uid>", methods=["DELETE"])
+@require_admin
+def delete_user(uid):
+    if uid == g.user.get("sub"):
+        return jsonify({"error": "無法刪除自己"}), 400
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM users WHERE id=%s", (uid,))
+    db.commit()
+    return jsonify({"ok": True})
+
+
+@app.route("/api/users/<int:uid>/channels", methods=["GET"])
+@require_admin
+def get_user_channels(uid):
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute("SELECT channel_name FROM user_channel_access WHERE user_id=%s ORDER BY channel_name", (uid,))
+        channels = [r["channel_name"] for r in cur.fetchall()]
+    return jsonify(channels)
+
+
+@app.route("/api/users/<int:uid>/channels", methods=["PUT"])
+@require_admin
+def set_user_channels(uid):
+    channels = request.get_json()
+    if not isinstance(channels, list):
+        return jsonify({"error": "expected list"}), 400
+    db = get_db()
+    with db.cursor() as cur:
+        cur.execute("DELETE FROM user_channel_access WHERE user_id=%s", (uid,))
+        for ch in channels:
+            if ch:
+                cur.execute(
+                    "INSERT INTO user_channel_access (user_id, channel_name) VALUES (%s,%s) ON CONFLICT DO NOTHING",
+                    (uid, ch)
+                )
+    db.commit()
+    return jsonify({"ok": True})
 
 
 if __name__ == "__main__":
