@@ -526,6 +526,62 @@ def fetch_channel_info(url: str, cookies_file: str | None, max_items: int | None
         return None, 0, []
 
 
+def _probe_max_height(url: str, cookies_file: str | None) -> int | None:
+    """Return the highest video resolution (height) YouTube currently offers for
+    a single video, or None on failure. Needs the JS runtime to surface the
+    high-res VP9/AV1 formats — same config as the actual download."""
+    opts = {
+        "quiet":          True,
+        "skip_download":  True,
+        "socket_timeout": 30,
+        "js_runtimes":       {"node": {}},
+        "remote_components": ["ejs:github"],
+    }
+    if cookies_file:
+        p = COOKIES_DIR / cookies_file
+        if p.exists():
+            opts["cookiefile"] = str(p)
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+        if not info:
+            return None
+        heights = [f.get("height") for f in (info.get("formats") or []) if f.get("height")]
+        return max(heights) if heights else None
+    except Exception:
+        return None
+
+
+def _remove_from_archive(archive_path: Path, vid_id: str):
+    """Drop a single video ID from yt-dlp's download-archive so it re-downloads.
+    Archive lines look like 'youtube <video_id>'."""
+    if not archive_path.exists():
+        return
+    try:
+        with open(archive_path, "r", encoding="utf-8") as af:
+            lines = af.readlines()
+        kept = [ln for ln in lines if ln.strip().split(" ")[-1] != vid_id]
+        if len(kept) != len(lines):
+            with open(archive_path, "w", encoding="utf-8") as af:
+                af.writelines(kept)
+    except Exception:
+        pass
+
+
+# Quality preset → max allowed video height. "best"/"audio_only" have no cap.
+_QUALITY_CAP = {"4k": 2160, "2k": 1440, "1080p": 1080, "720p": 720, "480p": 480}
+
+def _quality_cap(quality: str) -> int | None:
+    return _QUALITY_CAP.get(quality)
+
+
+def _stored_max_height(info: dict) -> int | None:
+    """Highest video resolution recorded in a downloaded video's info.json
+    (the formats YouTube offered at download time). None if unavailable."""
+    heights = [f.get("height") for f in (info.get("formats") or []) if f.get("height")]
+    return max(heights) if heights else None
+
+
 def _enqueue_or_start(job_id: str):
     """Start the job immediately if a slot is free; otherwise add to queue."""
     global _running_count
@@ -544,7 +600,7 @@ def _enqueue_or_start(job_id: str):
             start_now = False
     if start_now:
         try:
-            threading.Thread(target=run_download, args=(job_id,), daemon=True).start()
+            threading.Thread(target=_run_download_guarded, args=(job_id,), daemon=True).start()
         except Exception:
             with _queue_lock:
                 _running_count = max(0, _running_count - 1)
@@ -562,7 +618,7 @@ def _try_start_next():
         next_id = _job_queue.pop(0)
         _running_count += 1
     try:
-        threading.Thread(target=run_download, args=(next_id,), daemon=True).start()
+        threading.Thread(target=_run_download_guarded, args=(next_id,), daemon=True).start()
     except Exception:
         with _queue_lock:
             _running_count = max(0, _running_count - 1)
@@ -643,12 +699,21 @@ def run_download(job_id: str):
     # Make a read-only temp copy of the cookies file so yt-dlp cannot write back
     # updated tokens and corrupt the original.
     _tmp_cookie_path = None
+    _src = None
     if cookies_file:
         _src = COOKIES_DIR / cookies_file
         if _src.exists():
-            _tmp_cookie_path = _src.with_suffix(".tmp_dl.txt")
-            shutil.copy2(_src, _tmp_cookie_path)
-            cookies_file = _tmp_cookie_path.name   # point yt-dlp at the copy
+            _candidate = _src.with_suffix(".tmp_dl.txt")
+            # copyfile (not copy2) — we don't need the source's metadata, and
+            # copy2's copystat step can raise FileNotFoundError on some mounts.
+            try:
+                shutil.copyfile(_src, _candidate)
+                _tmp_cookie_path = _candidate
+                cookies_file = _tmp_cookie_path.name   # point yt-dlp at the copy
+            except Exception as _ce:
+                # Fall back to the original cookies file rather than crashing the job
+                log(f"[warn] 無法建立 cookies 暫存副本，改用原始檔：{_ce}")
+                _tmp_cookie_path = None
 
     # Auto-migrate legacy folders whose name differs only by unsanitized chars
     # e.g. "Runway Chronicles#"  →  "Runway Chronicles"
@@ -740,6 +805,64 @@ def run_download(job_id: str):
             jobs[job_id]["status"] = "running"
             save_jobs()
         log(f"[info] 共 {total} 部影片，開始下載")
+
+    # ── Resolution re-check (only after a quality change + update check) ──────────
+    # When the channel's quality setting was changed, re-evaluate each already
+    # downloaded video: if a higher, in-range resolution is obtainable than the
+    # local file, delete it + drop it from the archive so Stage 2 re-downloads at
+    # the new quality. Decision uses each video's stored info.json (the formats
+    # recorded at download time) — no per-video network probing — falling back to
+    # a probe only when that metadata is missing.
+    _rc_quality = filters.get("quality", "best")
+    if snap.get("quality_recheck") and _rc_quality != "audio_only":
+        _cap = _quality_cap(_rc_quality)   # None = "best" → no upper limit
+        with jobs_lock:
+            _cand = [(vid, dict(v)) for vid, v in jobs[job_id]["videos"].items()
+                     if len(vid) == 11]
+        log(f"[info] 畫質重新檢查（目標：{_rc_quality}）：比對 {len(_cand)} 部影片…")
+        _rechecked = 0
+        for _vid_id, _v in _cand:
+            if _stop_event.is_set():
+                break
+            _vid_folder = output_dir / sanitize_dirname(_v.get("title", ""))
+            _info = read_info_json(_vid_folder)
+            _local_h = _info.get("height")
+            if not _local_h:
+                continue   # not downloaded / no metadata → skip
+            _avail_h = _stored_max_height(_info)
+            if not _avail_h:
+                _avail_h = _probe_max_height(f"https://www.youtube.com/watch?v={_vid_id}", cookies_file)
+            if not _avail_h:
+                continue
+            _target = min(_cap, _avail_h) if _cap else _avail_h
+            if _target <= _local_h:
+                continue   # local already meets/exceeds the obtainable target → keep
+            # A better in-range resolution exists → remove local copy + archive entry, re-queue
+            try:
+                if _vid_folder.exists():
+                    shutil.rmtree(str(_vid_folder))
+            except Exception as _e:
+                log(f"[warn] 重抓時刪除失敗：{_vid_folder.name}：{_e}")
+                continue
+            _remove_from_archive(archive_path, _vid_id)
+            try:
+                _media_list_remove(str(_vid_folder.relative_to(base_dir)).replace("\\", "/"))
+            except Exception:
+                pass
+            with jobs_lock:
+                if _vid_id in jobs[job_id]["videos"]:
+                    jobs[job_id]["videos"][_vid_id]["status"]    = "pending"
+                    jobs[job_id]["videos"][_vid_id]["percent"]   = 0
+                    jobs[job_id]["videos"][_vid_id]["error_msg"] = ""
+            _rechecked += 1
+            log(f"[info] 重抓畫質：{_v.get('title','')[:40]}（{_local_h}p → 目標 {_target}p）")
+        if _rechecked:
+            log(f"[info] 共 {_rechecked} 部影片將以新畫質重新下載")
+        else:
+            log("[info] 所有已下載影片皆已符合目標畫質，無需重抓")
+        with jobs_lock:
+            jobs[job_id]["quality_recheck"] = False
+            save_jobs()
 
     # Stage 2: actual download
     exclude_kws = [k.strip() for k in filters.get("exclude_keywords", "").split(",") if k.strip()]
@@ -865,13 +988,26 @@ def run_download(job_id: str):
         t.start()
 
     quality = filters.get("quality", "best")
+    # Resolution-capped selection: take the highest-resolution video at or below
+    # the chosen cap (best/4K/2K/1080p/480p); if only lower formats exist, take the
+    # highest of those. YouTube only offers 4K/1440p as VP9 or AV1, never as
+    # H.264/mp4 — so we must NOT restrict the video stream to ext=mp4 (that caps
+    # quality at 1080p). Instead pick by height in any codec, then remux to mp4 via
+    # format_sort/merge_output_format below. Audio prefers AAC (acodec^=mp4a) so the
+    # merged mp4 plays everywhere; the acodec!=ec-3 fallback avoids EAC-3 / Dolby
+    # Digital Plus which browsers cannot decode in HTML5 <video>.
+    def _vfmt(cap):
+        h = f"[height<={cap}]" if cap else ""
+        return (f"bestvideo{h}+bestaudio[acodec^=mp4a]/"
+                f"bestvideo{h}+bestaudio[acodec!=ec-3]/"
+                f"bestvideo{h}+bestaudio/best{h}")
     format_map = {
-        # [acodec^=mp4a] ensures AAC audio — prevents yt-dlp from picking
-        # EAC-3 / Dolby Digital Plus (ec-3) which YouTube now offers on some
-        # videos but browsers cannot decode in HTML5 <video>.
-        "best":       "bestvideo[ext=mp4]+bestaudio[acodec^=mp4a][ext=m4a]/bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-        "720p":       "bestvideo[height<=720][ext=mp4]+bestaudio[acodec^=mp4a][ext=m4a]/bestvideo[height<=720][ext=mp4]+bestaudio[ext=m4a]/best[height<=720]",
-        "480p":       "bestvideo[height<=480][ext=mp4]+bestaudio[acodec^=mp4a][ext=m4a]/bestvideo[height<=480][ext=mp4]+bestaudio[ext=m4a]/best[height<=480]",
+        "best":       _vfmt(None),
+        "4k":         _vfmt(2160),
+        "2k":         _vfmt(1440),
+        "1080p":      _vfmt(1080),
+        "720p":       _vfmt(720),    # legacy jobs created before the option list changed
+        "480p":       _vfmt(480),
         "audio_only": "bestaudio[acodec^=mp4a][ext=m4a]/bestaudio[ext=m4a]/bestaudio",
     }
 
@@ -893,7 +1029,11 @@ def run_download(job_id: str):
 
     sub_langs = settings.get("subtitle_langs", ["zh-Hant", "zh-Hans", "en", "ja"])
     dl_opts = {
-        "format":            format_map.get(quality, "best"),
+        "format":            format_map.get(quality, format_map["best"]),
+        # res first → always grab the highest resolution (incl. 4K). At the same
+        # resolution prefer AV1, which lives natively in mp4 so the merge is clean.
+        "format_sort":       ["res", "fps", "vcodec:av01"],
+        "merge_output_format": "mp4",
         "outtmpl":           str(output_dir / "%(title)s" / "%(title)s.%(ext)s"),
         "match_filter":      match_filter,
         "ignoreerrors":      True,
@@ -1048,11 +1188,9 @@ def run_download(job_id: str):
             jobs[job_id]["finished_at"] = datetime.now().isoformat()
             save_jobs()
     finally:
-        global _running_count
-        with _queue_lock:
-            _running_count = max(0, _running_count - 1)
-        _try_start_next()
-        _stop_flags.pop(job_id, None)
+        # Note: the concurrency-slot release + stop-flag cleanup + queue advance
+        # live in _run_download_guarded's finally so they ALWAYS run, even if this
+        # function crashes before reaching here (e.g. a prefetch/cookies error).
         # Update media list for this channel (only scans one channel folder, not all)
         try:
             _update_channel_media(output_dir)
@@ -1061,15 +1199,39 @@ def run_download(job_id: str):
         # Copy refreshed tokens back to the original, then remove temp copy.
         # yt-dlp rotates OAuth tokens during download; discarding the temp file
         # would leave the original with stale tokens that YouTube rejects next time.
-        if _tmp_cookie_path and _tmp_cookie_path.exists():
+        if _tmp_cookie_path and _src and _tmp_cookie_path.exists():
             try:
-                shutil.copy2(_tmp_cookie_path, _src)
+                shutil.copyfile(_tmp_cookie_path, _src)
             except Exception:
                 pass
             try:
                 _tmp_cookie_path.unlink()
             except Exception:
                 pass
+
+
+def _run_download_guarded(job_id: str):
+    """Always-release wrapper around run_download. The concurrency slot is taken by
+    the caller before the thread starts; this guarantees it is given back (and the
+    next queued job started) no matter how run_download exits — including an
+    unhandled exception in the prefetch/cookies stage, which previously left the
+    job stuck on 'prefetching' and deadlocked the queue forever."""
+    global _running_count
+    try:
+        run_download(job_id)
+    except Exception as e:
+        with jobs_lock:
+            j = jobs.get(job_id)
+            if j:
+                j["status"]      = "error"
+                j.setdefault("logs", []).append(f"[error] 任務異常中止：{e}")
+                j["finished_at"] = datetime.now().isoformat()
+                save_jobs()
+    finally:
+        _stop_flags.pop(job_id, None)
+        with _queue_lock:
+            _running_count = max(0, _running_count - 1)
+        _try_start_next()
 
 
 # ── REST: Jobs ────────────────────────────────────────────────────────────────
@@ -1153,6 +1315,14 @@ def patch_job(job_id):
             return jsonify({"error": "not found"}), 404
         if "cookies_file" in data:
             job["cookies_file"] = data["cookies_file"] or None
+        if "quality" in data:
+            new_q = data["quality"] or "best"
+            old_q = (job.get("filters") or {}).get("quality", "best")
+            job.setdefault("filters", {})["quality"] = new_q
+            # Flag so the next update check re-evaluates already-downloaded videos
+            # against the new quality (see run_download resolution re-check).
+            if new_q != old_q:
+                job["quality_recheck"] = True
         save_jobs()
     return jsonify({"ok": True})
 
