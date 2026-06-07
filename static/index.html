@@ -584,7 +584,9 @@ input:focus, select:focus { border-color: #7c6dfa; }
       <label data-i18n="p1_quality">Quality</label>
       <select id="f_quality">
         <option value="best" data-i18n="p1_quality_best">Best Quality</option>
-        <option value="720p">720p</option>
+        <option value="4k">4K</option>
+        <option value="2k">2K</option>
+        <option value="1080p">1080p</option>
         <option value="480p">480p</option>
         <option value="audio_only" data-i18n="p1_quality_audio">Audio Only (m4a)</option>
       </select>
@@ -1492,6 +1494,14 @@ function renderChannelCard(j) {
           ).join('')}
         </select>
       </div>
+      <div style="display:flex;align-items:center;gap:6px">
+        <span style="font-size:.75rem;color:#666;white-space:nowrap">${t("p2_quality_label")}</span>
+        <select style="font-size:.78rem"
+          onchange="updateJobQuality('${j.id}',this.value,event)"
+          onclick="event.stopPropagation()">
+          ${_qualityOptions((j.filters&&j.filters.quality)||'best')}
+        </select>
+      </div>
       <button class="btn btn-ghost btn-sm" onclick="selectLog('${j.id}',event)">
         ${selectedJobId === j.id && logVisible ? t("p2_hide_log") : t("p2_view_log")}
       </button>
@@ -2120,6 +2130,32 @@ async function updateJobCookies(jobId, cookiesFile, e) {
     headers: {"Content-Type":"application/json"},
     body: JSON.stringify({ cookies_file: cookiesFile || null })
   });
+  loadQueue();
+}
+
+function _qualityLabel(q) {
+  if (q === "best")       return t("p1_quality_best");
+  if (q === "audio_only") return t("p1_quality_audio");
+  return ({"4k":"4K","2k":"2K","1080p":"1080p","720p":"720p","480p":"480p"})[q] || q;
+}
+
+// Build <option> list; always include the job's current value (covers legacy "720p")
+function _qualityOptions(cur) {
+  const opts = ["best","4k","2k","1080p","480p","audio_only"];
+  if (cur && !opts.includes(cur)) opts.splice(3, 0, cur);   // insert legacy value in place
+  return opts.map(q =>
+    `<option value="${q}" ${q === cur ? 'selected' : ''}>${_qualityLabel(q)}</option>`
+  ).join('');
+}
+
+async function updateJobQuality(jobId, quality, e) {
+  e.stopPropagation();
+  await apiFetch(`/api/jobs/${jobId}`, {
+    method: "PATCH",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ quality })
+  });
+  alert(t("p2_quality_changed"));
   loadQueue();
 }
 

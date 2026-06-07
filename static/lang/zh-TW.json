@@ -67,6 +67,8 @@
   "p2_update": "更新檢查",
   "p2_checking": "同步檢查中…",
   "p2_cookies_label": "Cookies：",
+  "p2_quality_label": "畫質：",
+  "p2_quality_changed": "畫質已更新。請對此頻道按「更新檢查」，才會依新畫質重新評估已下載的影片。",
   "p2_no_cookies": "不使用",
   "p2_view_log": "查看紀錄",
   "p2_hide_log": "隱藏紀錄",

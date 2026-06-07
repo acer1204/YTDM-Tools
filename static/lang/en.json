@@ -67,6 +67,8 @@
   "p2_update": "Update Check",
   "p2_checking": "Checking...",
   "p2_cookies_label": "Cookies:",
+  "p2_quality_label": "Resolution:",
+  "p2_quality_changed": "Resolution updated. Press Update Check on this channel to re-evaluate already-downloaded videos against the new resolution.",
   "p2_no_cookies": "None",
   "p2_view_log": "View Log",
   "p2_hide_log": "Hide Log",
